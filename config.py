@@ -1,5 +1,7 @@
+from typing import Annotated
+
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -10,7 +12,7 @@ class Settings(BaseSettings):
     )
 
     bot_token: str = Field(..., min_length=1)
-    admin_ids: list[int] = Field(default_factory=list)
+    admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     db_path: str = "data/bot.db"
 
     @field_validator("admin_ids", mode="before")

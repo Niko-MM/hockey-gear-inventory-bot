@@ -6,6 +6,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 from config import settings
+from db import init_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +28,8 @@ async def cmd_start(message: Message) -> None:
 
 
 async def main() -> None:
+    await init_db()
+
     bot = Bot(token=settings.bot_token)
     dp = Dispatcher()
     dp.message.register(cmd_start, CommandStart())
