@@ -1,0 +1,46 @@
+# hockey-gear-inventory-bot
+
+Telegram-бот для учёта товара и продаж в рознице хоккейной экипировки.
+
+Стек: Python 3.13, [aiogram](https://docs.aiogram.dev/) 3.x, SQLAlchemy (async) + SQLite.
+
+## Возможности (план MVP)
+
+- Каталог клюшек: бренд, модель, жёсткость, загиб, хват
+- Приход партиями с собственной закупочной ценой
+- Продажа из выбранной партии с отметкой места оплаты
+- Отчёты по остаткам, продажам и прибыли за период
+
+## Локальный запуск
+
+1. Создай виртуальное окружение и установи зависимости:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+2. Скопируй `.env.example` в `.env` и заполни:
+
+- `BOT_TOKEN` — токен от [@BotFather](https://t.me/BotFather)
+- `ADMIN_IDS` — твой Telegram user id (можно узнать у [@userinfobot](https://t.me/userinfobot))
+- `DB_PATH` — путь к файлу SQLite (по умолчанию `data/bot.db`)
+
+3. Запусти бота:
+
+```bash
+python bot.py
+```
+
+Бот работает через long polling. Файл `.env` не коммитится.
+
+## Структура
+
+Каркас на старте:
+
+- `bot.py` — точка входа
+- `config.py` — настройки из окружения
+- `requirements.txt` — зависимости
+
+Дальше появятся модули БД, FSM-сценарии (каталог, партии, продажи) и отчёты.
