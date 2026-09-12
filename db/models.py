@@ -33,25 +33,27 @@ class City(Base):
     batches: Mapped[list["Batch"]] = relationship(back_populates="city")
 
 
-class Brand(Base):
-    __tablename__ = "brands"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-
-    models: Mapped[list["StickModel"]] = relationship(back_populates="brand")
-
-
 class StickModel(Base):
     __tablename__ = "models"
-    __table_args__ = (UniqueConstraint("brand_id", "name", name="uq_model_per_brand"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    brand_id: Mapped[int] = mapped_column(ForeignKey("brands.id"), nullable=False)
-    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    name: Mapped[str] = mapped_column(String(150), unique=True, nullable=False)
 
-    brand: Mapped[Brand] = relationship(back_populates="models")
+    colors: Mapped[list["ColorOption"]] = relationship(back_populates="model")
     products: Mapped[list["Product"]] = relationship(back_populates="model")
+
+
+class ColorOption(Base):
+    __tablename__ = "color_options"
+    __table_args__ = (UniqueConstraint("model_id", "name", name="uq_color_per_model"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model_id: Mapped[int] = mapped_column(ForeignKey("models.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    model: Mapped[StickModel] = relationship(back_populates="colors")
+    products: Mapped[list["Product"]] = relationship(back_populates="color")
 
 
 class FlexOption(Base):
@@ -89,6 +91,7 @@ class Product(Base):
             "flex_id",
             "curve_id",
             "grip_id",
+            "color_id",
             name="uq_product_sku",
         ),
     )
@@ -98,11 +101,13 @@ class Product(Base):
     flex_id: Mapped[int] = mapped_column(ForeignKey("flex_options.id"), nullable=False)
     curve_id: Mapped[int] = mapped_column(ForeignKey("curve_options.id"), nullable=False)
     grip_id: Mapped[int] = mapped_column(ForeignKey("grip_options.id"), nullable=False)
+    color_id: Mapped[int] = mapped_column(ForeignKey("color_options.id"), nullable=False)
 
     model: Mapped[StickModel] = relationship(back_populates="products")
     flex: Mapped[FlexOption] = relationship(back_populates="products")
     curve: Mapped[CurveOption] = relationship(back_populates="products")
     grip: Mapped[GripOption] = relationship(back_populates="products")
+    color: Mapped[ColorOption] = relationship(back_populates="products")
     batches: Mapped[list["Batch"]] = relationship(back_populates="product")
 
 
