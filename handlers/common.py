@@ -11,9 +11,7 @@ router = Router()
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await message.answer(
-        "Бот учёта клюшек.\n"
-        "Сейчас: справочники, кассы, поступление, продажа и остатки.\n"
-        "Прибыль за период и последние операции — следующий этап.",
+        "Учёт клюшек. Продажа, поступление, остатки и кассы — кнопки внизу.",
         reply_markup=main_menu(),
     )
 
@@ -21,4 +19,4 @@ async def cmd_start(message: Message) -> None:
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("Отменил. Главное меню.", reply_markup=main_menu())
+    await message.answer("Отменил.", reply_markup=main_menu())

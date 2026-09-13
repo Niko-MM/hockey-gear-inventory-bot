@@ -3,7 +3,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import CashTransfer, Sale, Seller
+from db.models import CashTransfer, CashWithdrawal, Sale, Seller
 from repositories.catalog import DuplicateNameError, InUseError
 
 
@@ -47,7 +47,12 @@ async def delete_seller(session: AsyncSession, seller_id: int) -> None:
             )
         )
     )
-    if sales_count or transfers_count:
+    withdrawals_count = await session.scalar(
+        select(func.count())
+        .select_from(CashWithdrawal)
+        .where(CashWithdrawal.seller_id == seller_id)
+    )
+    if sales_count or transfers_count or withdrawals_count:
         raise InUseError
     await session.delete(seller)
 
@@ -66,7 +71,12 @@ async def seller_balance(session: AsyncSession, seller_id: int) -> Decimal:
             CashTransfer.from_seller_id == seller_id
         )
     )
-    return Decimal(sales_total) + Decimal(incoming) - Decimal(outgoing)
+    taken = await session.scalar(
+        select(func.coalesce(func.sum(CashWithdrawal.amount), 0)).where(
+            CashWithdrawal.seller_id == seller_id
+        )
+    )
+    return Decimal(sales_total) + Decimal(incoming) - Decimal(outgoing) - Decimal(taken)
 
 
 async def list_balances(session: AsyncSession) -> list[tuple[Seller, Decimal]]:
@@ -95,6 +105,22 @@ async def transfer(
         to_seller_id=to_seller_id,
         amount=amount,
     )
+    session.add(record)
+    await session.flush()
+    return record
+
+
+async def withdraw(
+    session: AsyncSession,
+    seller_id: int,
+    amount: Decimal,
+) -> CashWithdrawal:
+    if amount <= 0:
+        raise InsufficientFundsError
+    balance = await seller_balance(session, seller_id)
+    if amount > balance:
+        raise InsufficientFundsError
+    record = CashWithdrawal(seller_id=seller_id, amount=amount)
     session.add(record)
     await session.flush()
     return record

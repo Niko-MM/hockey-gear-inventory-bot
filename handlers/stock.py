@@ -107,10 +107,10 @@ async def _show_cities(
 ) -> None:
     rows = await stock.cities_with_stock(session)
     if not rows:
-        text = "Остатков нет. Сначала внеси поступление."
+        text = "Остатков нет. Сначала поступление."
         markup = None
     else:
-        text = "Остатки. Выбери город."
+        text = "Какой город?"
         markup = cities_keyboard(rows)
     target = _callback_message(callback) if callback else None
     if target:
@@ -128,7 +128,7 @@ async def _show_menu(callback: CallbackQuery, session: AsyncSession, city_id: in
     message = _callback_message(callback)
     if message:
         await message.edit_text(
-            f"Остатки · {city.name}\n\nКак смотреть список?",
+            f"{city.name}. Как показать?",
             reply_markup=view_menu_keyboard(city_id),
         )
 
@@ -163,7 +163,7 @@ async def _show_values(callback: CallbackQuery, session: AsyncSession, city_id: 
         )
         return
     await message.edit_text(
-        f"{city.name}. Выбери {title}.",
+        f"{city.name}. Какой {title}?",
         reply_markup=values_keyboard(city_id, axis, items),
     )
 
