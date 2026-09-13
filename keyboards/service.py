@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -89,7 +91,7 @@ def colors_keyboard(model_id: int, colors: list[ColorOption]) -> InlineKeyboardM
 
 def named_options_keyboard(
     section: str,
-    items: list[FlexOption | CurveOption | GripOption],
+    items: Sequence[FlexOption | CurveOption | GripOption],
     label_attr: str,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
