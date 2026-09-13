@@ -57,7 +57,7 @@ async def open_entry(
 ) -> None:
     entry = await journal_repo.get_entry(session, callback_data.kind, callback_data.item_id)
     if entry is None:
-        await callback.answer("Запись уже удалена.", show_alert=True)
+        await callback.answer("Этой записи уже нет.", show_alert=True)
         await _show_list(session, callback=callback)
         return
     await callback.answer()
@@ -79,17 +79,17 @@ async def ask_undo(
 ) -> None:
     entry = await journal_repo.get_entry(session, callback_data.kind, callback_data.item_id)
     if entry is None:
-        await callback.answer("Запись уже удалена.", show_alert=True)
+        await callback.answer("Этой записи уже нет.", show_alert=True)
         await _show_list(session, callback=callback)
         return
     if not entry.can_undo:
-        await callback.answer(entry.block_reason or "Это уже нельзя удалить.", show_alert=True)
+        await callback.answer(entry.block_reason or "Это уже нельзя отменить.", show_alert=True)
         return
     await callback.answer()
     message = _callback_message(callback)
     if message:
         await message.edit_text(
-            f"{entry.title}\n\n{entry.body}\n\nУдалить?",
+            f"{entry.title}\n\n{entry.body}\n\nОтменить?",
             reply_markup=journal_confirm_keyboard(entry.kind, entry.item_id),
         )
 
@@ -107,4 +107,4 @@ async def undo_entry(
         await _show_list(session, callback=callback)
         return
     await callback.answer()
-    await _show_list(session, callback=callback, notice="✅ Удалил")
+    await _show_list(session, callback=callback, notice="✅ Отменил")
