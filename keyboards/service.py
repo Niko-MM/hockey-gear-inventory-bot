@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from db.models import ColorOption, CurveOption, FlexOption, GripOption, StickModel
+from db.models import ColorOption, CurveOption, FlexOption, GripOption, Seller, StickModel
 from keyboards.callbacks import ManageCB, NavCB
 
 
@@ -22,8 +22,9 @@ def manage_menu() -> InlineKeyboardMarkup:
     builder.button(text="Флекс", callback_data=ManageCB(section="flex", action="list").pack())
     builder.button(text="Загиб", callback_data=ManageCB(section="curve", action="list").pack())
     builder.button(text="Хват", callback_data=ManageCB(section="grip", action="list").pack())
+    builder.button(text="Продавцы", callback_data=ManageCB(section="seller", action="list").pack())
     builder.button(text="« Сервис", callback_data=NavCB(to="service").pack())
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
 
@@ -85,6 +86,28 @@ def colors_keyboard(model_id: int, colors: list[ColorOption]) -> InlineKeyboardM
             text="« Модели",
             callback_data=ManageCB(section="model", action="list").pack(),
         )
+    )
+    return builder.as_markup()
+
+
+def sellers_keyboard(sellers: list[Seller]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for seller in sellers:
+        builder.row(
+            InlineKeyboardButton(text=seller.name, callback_data="noop"),
+            InlineKeyboardButton(
+                text="Удалить",
+                callback_data=ManageCB(section="seller", action="del", item_id=seller.id).pack(),
+            ),
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="Добавить продавца",
+            callback_data=ManageCB(section="seller", action="add").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="« Управление", callback_data=NavCB(to="manage").pack())
     )
     return builder.as_markup()
 

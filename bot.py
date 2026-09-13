@@ -2,10 +2,12 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramNetworkError, TelegramUnauthorizedError
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import settings
 from db import init_db
+from handlers.cash import router as cash_router
 from handlers.common import router as common_router
 from handlers.management import router as management_router
 from handlers.menu import router as menu_router
@@ -28,10 +30,19 @@ async def main() -> None:
     dp.update.middleware(DbSessionMiddleware())
     dp.include_router(common_router)
     dp.include_router(management_router)
+    dp.include_router(cash_router)
     dp.include_router(menu_router)
 
     logger.info("Бот запущен (polling)")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    except TelegramNetworkError:
+        logger.error(
+            "Нет доступа к api.telegram.org. "
+            "Проверь интернет или VPN (Telegram часто недоступен без него)."
+        )
+    except TelegramUnauthorizedError:
+        logger.error("Неверный BOT_TOKEN. Проверь .env и токен у BotFather.")
 
 
 if __name__ == "__main__":

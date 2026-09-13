@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from config import settings
@@ -19,6 +19,8 @@ def _enable_sqlite_fk(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
+
+
 async_session_maker = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -26,10 +28,20 @@ async_session_maker = async_sessionmaker(
 )
 
 
+def _migrate_schema(sync_conn) -> None:
+    Base.metadata.create_all(sync_conn)
+    inspector = inspect(sync_conn)
+    if "sales" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("sales")}
+    if "seller_id" not in columns:
+        sync_conn.execute(text("ALTER TABLE sales ADD COLUMN seller_id INTEGER REFERENCES sellers(id)"))
+
+
 async def init_db() -> None:
     db_file.parent.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(_migrate_schema)
     async with async_session_maker() as session:
         await seed_cities(session)
         await session.commit()
