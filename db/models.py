@@ -39,7 +39,10 @@ class StickModel(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(150), unique=True, nullable=False)
 
-    colors: Mapped[list["ColorOption"]] = relationship(back_populates="model")
+    colors: Mapped[list["ColorOption"]] = relationship(
+        back_populates="model",
+        cascade="all, delete-orphan",
+    )
     products: Mapped[list["Product"]] = relationship(back_populates="model")
 
 
