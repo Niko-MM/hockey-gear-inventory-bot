@@ -164,6 +164,26 @@ async def delete_grip(session: AsyncSession, grip_id: int) -> None:
     await session.delete(item)
 
 
+async def find_product(
+    session: AsyncSession,
+    *,
+    model_id: int,
+    color_id: int,
+    flex_id: int,
+    curve_id: int,
+    grip_id: int,
+) -> Product | None:
+    return await session.scalar(
+        select(Product).where(
+            Product.model_id == model_id,
+            Product.color_id == color_id,
+            Product.flex_id == flex_id,
+            Product.curve_id == curve_id,
+            Product.grip_id == grip_id,
+        )
+    )
+
+
 async def get_or_create_product(
     session: AsyncSession,
     *,
