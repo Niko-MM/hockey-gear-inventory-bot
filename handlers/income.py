@@ -1,7 +1,7 @@
 # pyright: reportUnusedCallResult=false
 from decimal import Decimal, InvalidOperation
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
@@ -197,6 +197,29 @@ def _keyboard(step: str, items: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     return choice_keyboard(items, step, show_back=show_back)
 
 
+def _receipt(progress: str) -> str:
+    return progress.removeprefix("Поступление").strip()
+
+
+async def _remember_prompt(state: FSMContext, message: Message) -> None:
+    await state.update_data(
+        prompt_chat_id=message.chat.id,
+        prompt_message_id=message.message_id,
+    )
+
+
+async def _delete_prompt(bot: Bot, state: FSMContext) -> None:
+    data = await state.get_data()
+    chat_id = data.get("prompt_chat_id")
+    message_id = data.get("prompt_message_id")
+    if not isinstance(chat_id, int) or not isinstance(message_id, int):
+        return
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except TelegramBadRequest:
+        pass
+
+
 async def _show_step(
     session: AsyncSession,
     state: FSMContext,
@@ -204,6 +227,7 @@ async def _show_step(
     *,
     callback: CallbackQuery | None = None,
     message: Message | None = None,
+    replace: bool = False,
 ) -> None:
     if step == "qty":
         await state.set_state(Income.quantity)
@@ -222,19 +246,29 @@ async def _show_step(
     markup = _keyboard(step, items)
 
     target = _callback_message(callback) if callback else None
-    if target:
+    if target and not replace:
         try:
             await target.edit_text(text, reply_markup=markup)
+            await _remember_prompt(state, target)
+            return
         except TelegramBadRequest as exc:
-            if "message is not modified" not in str(exc):
-                await target.answer(text, reply_markup=markup)
-        return
+            if "message is not modified" in str(exc):
+                await _remember_prompt(state, target)
+                return
+            await _delete_prompt(target.bot, state)
+            sent = await target.answer(text, reply_markup=markup)
+            await _remember_prompt(state, sent)
+            return
     if message:
-        await message.answer(text, reply_markup=markup)
+        if replace:
+            await _delete_prompt(message.bot, state)
+        sent = await message.answer(text, reply_markup=markup)
+        await _remember_prompt(state, sent)
 
 
 @router.message(F.text == BTN_INCOME)
 async def open_income(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    await _delete_prompt(message.bot, state)
     await state.clear()
     await _show_step(session, state, "city", message=message)
 
@@ -300,7 +334,7 @@ async def save_quantity(message: Message, state: FSMContext, session: AsyncSessi
         await message.answer("Нужно целое число больше нуля, например 3.")
         return
     await state.update_data(quantity=quantity)
-    await _show_step(session, state, "price", message=message)
+    await _show_step(session, state, "price", message=message, replace=True)
 
 
 @router.message(Income.price, F.text, ~F.text.in_(MENU_TEXTS))
@@ -310,7 +344,7 @@ async def save_price(message: Message, state: FSMContext, session: AsyncSession)
         await message.answer("Нужна цена больше нуля, например 12500 или 12500.50")
         return
     await state.update_data(purchase_price=str(price))
-    await _show_step(session, state, "confirm", message=message)
+    await _show_step(session, state, "confirm", message=message, replace=True)
 
 
 @router.callback_query(IncomeCB.filter(F.action == "save"))
@@ -362,8 +396,13 @@ async def save_batch(
     await callback.answer()
     message = _callback_message(callback)
     if message:
-        cities = [(city.id, city.name) for city in await batches_repo.list_cities(session)]
-        await message.edit_text(
-            f"Записал партию.\n\n{summary}\n\nЕщё одно поступление — выбери город.",
-            reply_markup=choice_keyboard(cities, "city", show_back=False),
+        final = (
+            f"✅ Партия записана\n\n{_receipt(summary)}\n\n"
+            "Чтобы внести ещё — Поступление."
         )
+        try:
+            await message.delete()
+        except TelegramBadRequest:
+            await message.edit_text(final, reply_markup=None)
+            return
+        await message.answer(final)
