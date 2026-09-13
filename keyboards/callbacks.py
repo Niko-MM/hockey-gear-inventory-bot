@@ -27,4 +27,6 @@ class SaleCB(CallbackData, prefix="sal"):
 
 class StockCB(CallbackData, prefix="stk"):
     action: str
+    city_id: int = 0
     item_id: int = 0
+    axis: str = ""

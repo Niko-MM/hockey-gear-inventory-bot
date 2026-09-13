@@ -118,11 +118,61 @@ async def curves_with_stock(
     return [(item, int(count)) for item, count in result.all()]
 
 
+async def flexes_in_city(session: AsyncSession, city_id: int) -> list[tuple[FlexOption, int]]:
+    qty = func.sum(Batch.remaining_quantity)
+    result = await session.execute(
+        select(FlexOption, qty)
+        .join(Product, Product.flex_id == FlexOption.id)
+        .join(Batch, Batch.product_id == Product.id)
+        .where(Batch.city_id == city_id, Batch.remaining_quantity > 0)
+        .group_by(FlexOption.id, FlexOption.value)
+        .order_by(FlexOption.value)
+    )
+    return [(item, int(count)) for item, count in result.all()]
+
+
+async def grips_in_city(session: AsyncSession, city_id: int) -> list[tuple[GripOption, int]]:
+    qty = func.sum(Batch.remaining_quantity)
+    result = await session.execute(
+        select(GripOption, qty)
+        .join(Product, Product.grip_id == GripOption.id)
+        .join(Batch, Batch.product_id == Product.id)
+        .where(Batch.city_id == city_id, Batch.remaining_quantity > 0)
+        .group_by(GripOption.id, GripOption.name)
+        .order_by(GripOption.name)
+    )
+    return [(item, int(count)) for item, count in result.all()]
+
+
+async def curves_in_city(session: AsyncSession, city_id: int) -> list[tuple[CurveOption, int]]:
+    qty = func.sum(Batch.remaining_quantity)
+    result = await session.execute(
+        select(CurveOption, qty)
+        .join(Product, Product.curve_id == CurveOption.id)
+        .join(Batch, Batch.product_id == Product.id)
+        .where(Batch.city_id == city_id, Batch.remaining_quantity > 0)
+        .group_by(CurveOption.id, CurveOption.name)
+        .order_by(CurveOption.name)
+    )
+    return [(item, int(count)) for item, count in result.all()]
+
+
 async def sku_with_stock(
     session: AsyncSession,
     city_id: int,
+    *,
+    flex_id: int | None = None,
+    grip_id: int | None = None,
+    curve_id: int | None = None,
 ) -> list[tuple[StickModel, ColorOption, FlexOption, GripOption, CurveOption, int]]:
     qty = func.sum(Batch.remaining_quantity)
+    filters = [Batch.city_id == city_id, Batch.remaining_quantity > 0]
+    if flex_id is not None:
+        filters.append(Product.flex_id == flex_id)
+    if grip_id is not None:
+        filters.append(Product.grip_id == grip_id)
+    if curve_id is not None:
+        filters.append(Product.curve_id == curve_id)
     result = await session.execute(
         select(StickModel, ColorOption, FlexOption, GripOption, CurveOption, qty)
         .join(Product, Product.model_id == StickModel.id)
@@ -131,7 +181,7 @@ async def sku_with_stock(
         .join(GripOption, GripOption.id == Product.grip_id)
         .join(CurveOption, CurveOption.id == Product.curve_id)
         .join(Batch, Batch.product_id == Product.id)
-        .where(Batch.city_id == city_id, Batch.remaining_quantity > 0)
+        .where(*filters)
         .group_by(
             StickModel.id,
             StickModel.name,
