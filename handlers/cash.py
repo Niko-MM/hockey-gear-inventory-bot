@@ -117,6 +117,9 @@ def _cash_text(rows: list) -> str:
         return "Касс нет. Добавь продавцов: Сервис → Справочник → Продавцы."
     lines = ["Кассы", ""]
     lines.extend(f"{seller.name} — {format_money(balance)}" for seller, balance in rows)
+    total = sum((balance for _, balance in rows), Decimal("0"))
+    lines.append("")
+    lines.append(f"Всего — {format_money(total)}")
     return "\n".join(lines)
 
 
