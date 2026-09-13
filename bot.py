@@ -10,6 +10,7 @@ from db import init_db
 from handlers.cash import router as cash_router
 from handlers.common import router as common_router
 from handlers.income import router as income_router
+from handlers.journal import router as journal_router
 from handlers.management import router as management_router
 from handlers.menu import router as menu_router
 from handlers.sale import router as sale_router
@@ -37,6 +38,7 @@ async def main() -> None:
     dp.include_router(income_router)
     dp.include_router(sale_router)
     dp.include_router(stock_router)
+    dp.include_router(journal_router)
     dp.include_router(menu_router)
 
     logger.info("Бот запущен (polling)")

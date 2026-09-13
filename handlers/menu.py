@@ -32,11 +32,6 @@ async def cb_manage(callback: CallbackQuery) -> None:
         )
 
 
-@router.callback_query(NavCB.filter(F.to == "edits"))
-async def cb_soon(callback: CallbackQuery) -> None:
-    await callback.answer("Журнал подключим следующим шагом.", show_alert=True)
-
-
 @router.callback_query(F.data == "noop")
 async def cb_noop(callback: CallbackQuery) -> None:
     await callback.answer()

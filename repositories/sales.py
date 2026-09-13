@@ -15,18 +15,31 @@ async def create_sale(
     batch_id: int,
     seller_id: int,
     total_amount: Decimal,
+    quantity: int = 1,
 ) -> Sale:
     batch = await session.get(Batch, batch_id)
-    if batch is None or batch.remaining_quantity < 1:
+    if batch is None or quantity < 1 or batch.remaining_quantity < quantity:
         raise OutOfStockError
-    batch.remaining_quantity -= 1
+    batch.remaining_quantity -= quantity
     sale = Sale(
         batch_id=batch_id,
         seller_id=seller_id,
-        quantity=1,
+        quantity=quantity,
         total_amount=total_amount,
         payment_location=PaymentLocation.WITH_ADMIN,
     )
     session.add(sale)
     await session.flush()
     return sale
+
+
+async def delete_sale(session: AsyncSession, sale: Sale) -> None:
+    batch = await session.get(Batch, sale.batch_id)
+    if batch is None:
+        await session.delete(sale)
+        return
+    restored = batch.remaining_quantity + sale.quantity
+    if restored > batch.quantity_in:
+        raise OutOfStockError
+    batch.remaining_quantity = restored
+    await session.delete(sale)

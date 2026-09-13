@@ -31,3 +31,9 @@ class StockCB(CallbackData, prefix="stk"):
     grip_id: int = 0
     flex_id: int = 0
     curve_id: int = 0
+
+
+class JournalCB(CallbackData, prefix="jrn"):
+    action: str
+    kind: str = ""
+    item_id: int = 0
