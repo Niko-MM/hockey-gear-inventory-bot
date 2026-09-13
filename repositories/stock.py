@@ -118,13 +118,21 @@ async def curves_with_stock(
     return [(item, int(count)) for item, count in result.all()]
 
 
-async def flexes_in_city(session: AsyncSession, city_id: int) -> list[tuple[FlexOption, int]]:
+async def flexes_in_city(
+    session: AsyncSession,
+    city_id: int,
+    *,
+    grip_id: int | None = None,
+) -> list[tuple[FlexOption, int]]:
     qty = func.sum(Batch.remaining_quantity)
+    filters = [Batch.city_id == city_id, Batch.remaining_quantity > 0]
+    if grip_id is not None:
+        filters.append(Product.grip_id == grip_id)
     result = await session.execute(
         select(FlexOption, qty)
         .join(Product, Product.flex_id == FlexOption.id)
         .join(Batch, Batch.product_id == Product.id)
-        .where(Batch.city_id == city_id, Batch.remaining_quantity > 0)
+        .where(*filters)
         .group_by(FlexOption.id, FlexOption.value)
         .order_by(FlexOption.value)
     )
@@ -144,13 +152,24 @@ async def grips_in_city(session: AsyncSession, city_id: int) -> list[tuple[GripO
     return [(item, int(count)) for item, count in result.all()]
 
 
-async def curves_in_city(session: AsyncSession, city_id: int) -> list[tuple[CurveOption, int]]:
+async def curves_in_city(
+    session: AsyncSession,
+    city_id: int,
+    *,
+    grip_id: int | None = None,
+    flex_id: int | None = None,
+) -> list[tuple[CurveOption, int]]:
     qty = func.sum(Batch.remaining_quantity)
+    filters = [Batch.city_id == city_id, Batch.remaining_quantity > 0]
+    if grip_id is not None:
+        filters.append(Product.grip_id == grip_id)
+    if flex_id is not None:
+        filters.append(Product.flex_id == flex_id)
     result = await session.execute(
         select(CurveOption, qty)
         .join(Product, Product.curve_id == CurveOption.id)
         .join(Batch, Batch.product_id == Product.id)
-        .where(Batch.city_id == city_id, Batch.remaining_quantity > 0)
+        .where(*filters)
         .group_by(CurveOption.id, CurveOption.name)
         .order_by(CurveOption.name)
     )
