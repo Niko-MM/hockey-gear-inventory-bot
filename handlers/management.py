@@ -1,3 +1,4 @@
+# pyright: reportUnusedCallResult=false
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -20,13 +21,19 @@ def _clean_name(text: str) -> str:
     return " ".join(text.split())
 
 
+def _callback_message(callback: CallbackQuery) -> Message | None:
+    message = callback.message
+    return message if isinstance(message, Message) else None
+
+
 async def _show_models(callback: CallbackQuery, session: AsyncSession) -> None:
     models = await catalog.list_models(session)
     text = "Модели. Нажми название, чтобы открыть цвета."
     if not models:
         text = "Моделей пока нет. Добавь первую — для конструктора поступления."
-    if callback.message:
-        await callback.message.edit_text(text, reply_markup=models_keyboard(models))
+    message = _callback_message(callback)
+    if message:
+        await message.edit_text(text, reply_markup=models_keyboard(models))
 
 
 async def _show_colors(callback: CallbackQuery, session: AsyncSession, model_id: int) -> None:
@@ -35,8 +42,9 @@ async def _show_colors(callback: CallbackQuery, session: AsyncSession, model_id:
         await callback.answer("Модель не найдена.", show_alert=True)
         return
     colors = await catalog.list_colors(session, model_id)
-    if callback.message:
-        await callback.message.edit_text(
+    message = _callback_message(callback)
+    if message:
+        await message.edit_text(
             f"Цвета модели «{model.name}».\n«Без цвета» — классика, его нельзя удалить.",
             reply_markup=colors_keyboard(model_id, colors),
         )
@@ -52,8 +60,9 @@ async def list_models(callback: CallbackQuery, session: AsyncSession) -> None:
 async def start_add_model(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddModel.name)
     await callback.answer()
-    if callback.message:
-        await callback.message.answer("Напиши название модели. /cancel — отмена.")
+    message = _callback_message(callback)
+    if message:
+        await message.answer("Напиши название модели. /cancel — отмена.")
 
 
 @router.message(AddModel.name, F.text, ~F.text.in_(MENU_TEXTS))
@@ -109,8 +118,9 @@ async def start_add_color(
     await state.set_state(AddColor.name)
     await state.update_data(model_id=callback_data.model_id)
     await callback.answer()
-    if callback.message:
-        await callback.message.answer("Напиши название раскраски. /cancel — отмена.")
+    message = _callback_message(callback)
+    if message:
+        await message.answer("Напиши название раскраски. /cancel — отмена.")
 
 
 @router.message(AddColor.name, F.text, ~F.text.in_(MENU_TEXTS))
@@ -120,7 +130,12 @@ async def save_color(message: Message, state: FSMContext, session: AsyncSession)
         await message.answer(NOT_TEXT)
         return
     data = await state.get_data()
-    model_id = int(data["model_id"])
+    raw_model_id = data.get("model_id")
+    if not isinstance(raw_model_id, int):
+        await state.clear()
+        await message.answer("Сессия сбилась. Открой Управление заново.")
+        return
+    model_id = raw_model_id
     try:
         await catalog.create_color(session, model_id, name)
     except DuplicateNameError:
@@ -156,8 +171,9 @@ async def delete_color(
 
 async def _show_flex(callback: CallbackQuery, session: AsyncSession) -> None:
     items = await catalog.list_flex(session)
-    if callback.message:
-        await callback.message.edit_text(
+    message = _callback_message(callback)
+    if message:
+        await message.edit_text(
             "Флекс (жёсткость).",
             reply_markup=named_options_keyboard("flex", items, "value"),
         )
@@ -165,8 +181,9 @@ async def _show_flex(callback: CallbackQuery, session: AsyncSession) -> None:
 
 async def _show_curves(callback: CallbackQuery, session: AsyncSession) -> None:
     items = await catalog.list_curves(session)
-    if callback.message:
-        await callback.message.edit_text(
+    message = _callback_message(callback)
+    if message:
+        await message.edit_text(
             "Загибы.",
             reply_markup=named_options_keyboard("curve", items, "name"),
         )
@@ -174,8 +191,9 @@ async def _show_curves(callback: CallbackQuery, session: AsyncSession) -> None:
 
 async def _show_grips(callback: CallbackQuery, session: AsyncSession) -> None:
     items = await catalog.list_grips(session)
-    if callback.message:
-        await callback.message.edit_text(
+    message = _callback_message(callback)
+    if message:
+        await message.edit_text(
             "Хваты.",
             reply_markup=named_options_keyboard("grip", items, "name"),
         )
@@ -203,24 +221,27 @@ async def list_grips(callback: CallbackQuery, session: AsyncSession) -> None:
 async def start_add_flex(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddFlex.value)
     await callback.answer()
-    if callback.message:
-        await callback.message.answer("Напиши значение флекса, например 87. /cancel — отмена.")
+    message = _callback_message(callback)
+    if message:
+        await message.answer("Напиши значение флекса, например 87. /cancel — отмена.")
 
 
 @router.callback_query(ManageCB.filter((F.section == "curve") & (F.action == "add")))
 async def start_add_curve(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddCurve.name)
     await callback.answer()
-    if callback.message:
-        await callback.message.answer("Напиши название загиба. /cancel — отмена.")
+    message = _callback_message(callback)
+    if message:
+        await message.answer("Напиши название загиба. /cancel — отмена.")
 
 
 @router.callback_query(ManageCB.filter((F.section == "grip") & (F.action == "add")))
 async def start_add_grip(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddGrip.name)
     await callback.answer()
-    if callback.message:
-        await callback.message.answer("Напиши название хвата, например левый. /cancel — отмена.")
+    message = _callback_message(callback)
+    if message:
+        await message.answer("Напиши название хвата, например левый. /cancel — отмена.")
 
 
 @router.message(AddFlex.value, F.text, ~F.text.in_(MENU_TEXTS))
