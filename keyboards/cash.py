@@ -9,6 +9,15 @@ from keyboards.callbacks import ManageCB, NavCB
 
 def cash_menu(rows: list[tuple[Seller, Decimal]]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    if rows:
+        builder.button(
+            text="Забрать",
+            callback_data=ManageCB(section="cash", action="withdraw").pack(),
+        )
+        builder.button(
+            text="За период",
+            callback_data=ManageCB(section="cash", action="report").pack(),
+        )
     if len(rows) >= 2:
         builder.button(
             text="Перевести",
@@ -38,6 +47,43 @@ def pick_seller_keyboard(
                 ).pack(),
             )
         )
+    builder.row(
+        InlineKeyboardButton(text="« Кассы", callback_data=NavCB(to="accounting").pack())
+    )
+    return builder.as_markup()
+
+
+def cash_nav_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="Отмена", callback_data=ManageCB(section="cash", action="cancel").pack())
+    )
+    return builder.as_markup()
+
+
+def withdraw_confirm_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="Записать",
+            callback_data=ManageCB(section="cash", action="save_wd").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="« Назад", callback_data=ManageCB(section="cash", action="withdraw").pack()),
+        InlineKeyboardButton(text="Отмена", callback_data=ManageCB(section="cash", action="cancel").pack()),
+    )
+    return builder.as_markup()
+
+
+def report_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="Другие даты",
+            callback_data=ManageCB(section="cash", action="report").pack(),
+        )
+    )
     builder.row(
         InlineKeyboardButton(text="« Кассы", callback_data=NavCB(to="accounting").pack())
     )

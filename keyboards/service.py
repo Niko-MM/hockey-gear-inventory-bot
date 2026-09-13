@@ -9,9 +9,9 @@ from keyboards.callbacks import ManageCB, NavCB
 
 def service_menu() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Бухгалтерия", callback_data=NavCB(to="accounting").pack())
-    builder.button(text="Управление", callback_data=NavCB(to="manage").pack())
-    builder.button(text="Последние операции", callback_data=NavCB(to="edits").pack())
+    builder.button(text="Кассы", callback_data=NavCB(to="accounting").pack())
+    builder.button(text="Справочник", callback_data=NavCB(to="manage").pack())
+    builder.button(text="Журнал", callback_data=NavCB(to="edits").pack())
     builder.adjust(1)
     return builder.as_markup()
 
@@ -52,7 +52,7 @@ def models_keyboard(models: list[StickModel]) -> InlineKeyboardMarkup:
         )
     )
     builder.row(
-        InlineKeyboardButton(text="« Управление", callback_data=NavCB(to="manage").pack())
+        InlineKeyboardButton(text="« Справочник", callback_data=NavCB(to="manage").pack())
     )
     return builder.as_markup()
 
@@ -107,7 +107,7 @@ def sellers_keyboard(sellers: list[Seller]) -> InlineKeyboardMarkup:
         )
     )
     builder.row(
-        InlineKeyboardButton(text="« Управление", callback_data=NavCB(to="manage").pack())
+        InlineKeyboardButton(text="« Справочник", callback_data=NavCB(to="manage").pack())
     )
     return builder.as_markup()
 
@@ -134,6 +134,6 @@ def named_options_keyboard(
         )
     )
     builder.row(
-        InlineKeyboardButton(text="« Управление", callback_data=NavCB(to="manage").pack())
+        InlineKeyboardButton(text="« Справочник", callback_data=NavCB(to="manage").pack())
     )
     return builder.as_markup()

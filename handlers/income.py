@@ -1,5 +1,5 @@
 # pyright: reportUnusedCallResult=false
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -14,6 +14,7 @@ from keyboards.menu import BTN_INCOME, BTN_SALE, BTN_SERVICE, BTN_STOCK
 from repositories import batches as batches_repo
 from repositories import catalog
 from states.income import Income
+from utils.money import format_money, parse_money
 
 router = Router()
 
@@ -59,22 +60,22 @@ CLEAR_AFTER = {
 
 EMPTY_HINT = {
     "city": "Городов нет.",
-    "model": "Моделей нет. Добавь в Сервис → Управление.",
-    "color": "Цветов нет. Добавь в Сервис → Управление.",
-    "flex": "Флекса нет. Добавь в Сервис → Управление.",
-    "curve": "Загибов нет. Добавь в Сервис → Управление.",
-    "grip": "Хватов нет. Добавь в Сервис → Управление.",
+    "model": "Моделей нет. Добавь в Сервис → Справочник.",
+    "color": "Цветов нет. Добавь в Сервис → Справочник.",
+    "flex": "Флекса нет. Добавь в Сервис → Справочник.",
+    "curve": "Загибов нет. Добавь в Сервис → Справочник.",
+    "grip": "Хватов нет. Добавь в Сервис → Справочник.",
 }
 
 PROMPT = {
-    "city": "Выбери город.",
-    "model": "Выбери модель.",
-    "color": "Выбери цвет.",
-    "flex": "Выбери флекс.",
-    "curve": "Выбери загиб.",
-    "grip": "Выбери хват.",
-    "qty": "Напиши количество целым числом, например 3.",
-    "price": "Напиши закупочную цену за штуку, например 12500 или 12500.50",
+    "city": "Какой город?",
+    "model": "Какая модель?",
+    "color": "Какой цвет?",
+    "flex": "Какой флекс?",
+    "curve": "Какой загиб?",
+    "grip": "Какой хват?",
+    "qty": "Сколько клюшек? Например 3",
+    "price": "Закуп одной? Например 12 500",
 }
 
 
@@ -83,27 +84,12 @@ def _callback_message(callback: CallbackQuery) -> Message | None:
     return message if isinstance(message, Message) else None
 
 
-def _format_money(amount: Decimal) -> str:
-    return f"{amount:.2f} ₽"
-
-
 def _parse_qty(text: str) -> int | None:
     cleaned = text.strip().replace(" ", "")
     if not cleaned.isdigit():
         return None
     value = int(cleaned)
     return value if value > 0 else None
-
-
-def _parse_price(text: str) -> Decimal | None:
-    cleaned = text.strip().replace(" ", "").replace(",", ".")
-    try:
-        value = Decimal(cleaned)
-    except InvalidOperation:
-        return None
-    if value <= 0:
-        return None
-    return value.quantize(Decimal("0.01"))
 
 
 def _color_title(color: ColorOption) -> str:
@@ -150,9 +136,9 @@ async def _progress_lines(session: AsyncSession, data: dict) -> str:
     raw_price = data.get("purchase_price")
     if isinstance(raw_price, str):
         price = Decimal(raw_price)
-        lines.append(f"Закуп: {_format_money(price)} / шт")
+        lines.append(f"Закуп: {format_money(price)} / шт")
         if isinstance(quantity, int):
-            lines.append(f"Сумма закупа: {_format_money(price * quantity)}")
+            lines.append(f"Сумма закупа: {format_money(price * quantity)}")
     return "\n".join(lines)
 
 
@@ -240,7 +226,7 @@ async def _show_step(
     items = await _choices(session, step, data)
     progress = await _progress_lines(session, data)
     if step == "confirm":
-        text = f"{progress}\n\nЗаписать партию?"
+        text = f"{progress}\n\nЗаписать?"
     else:
         text = _screen_text(progress, step, items)
     markup = _keyboard(step, items)
@@ -279,7 +265,7 @@ async def cancel_income(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     message = _callback_message(callback)
     if message:
-        await message.edit_text("Отменено. Главное меню.")
+        await message.edit_text("Отменил.")
 
 
 @router.callback_query(IncomeCB.filter(F.action == "back"))
@@ -339,9 +325,9 @@ async def save_quantity(message: Message, state: FSMContext, session: AsyncSessi
 
 @router.message(Income.price, F.text, ~F.text.in_(MENU_TEXTS))
 async def save_price(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    price = _parse_price(message.text or "")
+    price = parse_money(message.text or "")
     if price is None:
-        await message.answer("Нужна цена больше нуля, например 12500 или 12500.50")
+        await message.answer("Нужно целое число, например 12 500")
         return
     await state.update_data(purchase_price=str(price))
     await _show_step(session, state, "confirm", message=message, replace=True)
@@ -397,8 +383,7 @@ async def save_batch(
     message = _callback_message(callback)
     if message:
         final = (
-            f"✅ Партия записана\n\n{_receipt(summary)}\n\n"
-            "Чтобы внести ещё — Поступление."
+            f"✅ Принял\n\n{_receipt(summary)}"
         )
         try:
             await message.delete()

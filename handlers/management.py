@@ -21,7 +21,7 @@ from states.sellers import AddSeller
 router = Router()
 
 MENU_TEXTS = {BTN_SALE, BTN_INCOME, BTN_STOCK, BTN_SERVICE}
-NOT_TEXT = "Нужно текстовое название. /cancel — отмена."
+NOT_TEXT = "Нужно название текстом."
 
 
 def _clean_name(text: str) -> str:
@@ -71,7 +71,7 @@ async def start_add_model(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     message = _callback_message(callback)
     if message:
-        await message.answer("Напиши название модели. /cancel — отмена.")
+        await message.answer("Название модели?")
 
 
 @router.message(AddModel.name, F.text, ~F.text.in_(MENU_TEXTS))
@@ -133,7 +133,7 @@ async def start_add_color(
     await callback.answer()
     message = _callback_message(callback)
     if message:
-        await message.answer("Напиши название раскраски. /cancel — отмена.")
+        await message.answer("Название цвета?")
 
 
 @router.message(AddColor.name, F.text, ~F.text.in_(MENU_TEXTS))
@@ -148,7 +148,7 @@ async def save_color(
     raw_model_id = data.get("model_id")
     if not isinstance(raw_model_id, int):
         await state.clear()
-        await message.answer("Сессия сбилась. Открой Управление заново.")
+        await message.answer("Открой Справочник заново.")
         return
     model_id = raw_model_id
     try:
@@ -238,7 +238,7 @@ async def start_add_flex(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     message = _callback_message(callback)
     if message:
-        await message.answer("Напиши значение флекса, например 87. /cancel — отмена.")
+        await message.answer("Какой флекс? Например 87")
 
 
 @router.callback_query(ManageCB.filter((F.section == "curve") & (F.action == "add")))
@@ -247,7 +247,7 @@ async def start_add_curve(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     message = _callback_message(callback)
     if message:
-        await message.answer("Напиши название загиба. /cancel — отмена.")
+        await message.answer("Какой загиб?")
 
 
 @router.callback_query(ManageCB.filter((F.section == "grip") & (F.action == "add")))
@@ -256,7 +256,7 @@ async def start_add_grip(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     message = _callback_message(callback)
     if message:
-        await message.answer("Напиши название хвата, например левый. /cancel — отмена.")
+        await message.answer("Какой хват? Например левый")
 
 
 @router.message(AddFlex.value, F.text, ~F.text.in_(MENU_TEXTS))
@@ -369,7 +369,7 @@ async def _show_sellers(callback: CallbackQuery, session: AsyncSession) -> None:
     message = _callback_message(callback)
     if message:
         await message.edit_text(
-            "Продавцы. В конце продажи админ выберет, у кого осели деньги.",
+            "Продавцы — кому в кассу при продаже.",
             reply_markup=sellers_keyboard(items),
         )
 
@@ -386,7 +386,7 @@ async def start_add_seller(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     message = _callback_message(callback)
     if message:
-        await message.answer("Напиши имя продавца. /cancel — отмена.")
+        await message.answer("Имя продавца?")
 
 
 @router.message(AddSeller.name, F.text, ~F.text.in_(MENU_TEXTS))
@@ -415,7 +415,7 @@ async def delete_seller(
         await sellers_repo.delete_seller(session, callback_data.item_id)
     except InUseError:
         await callback.answer(
-            "Нельзя удалить: есть продажи или переводы.",
+            "Нельзя удалить: есть продажи, переводы или изъятия.",
             show_alert=True,
         )
         return

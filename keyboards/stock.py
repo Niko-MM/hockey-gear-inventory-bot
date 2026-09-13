@@ -29,7 +29,7 @@ def view_menu_keyboard(city_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="Как обычно",
+            text="Все клюшки",
             callback_data=StockCB(action="view", city_id=city_id, axis="default").pack(),
         )
     )
