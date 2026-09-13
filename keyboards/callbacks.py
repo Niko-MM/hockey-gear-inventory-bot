@@ -23,3 +23,8 @@ class SaleCB(CallbackData, prefix="sal"):
     step: str = ""
     item_id: int = 0
     extra_id: int = 0
+
+
+class StockCB(CallbackData, prefix="stk"):
+    action: str
+    item_id: int = 0

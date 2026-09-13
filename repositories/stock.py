@@ -118,6 +118,49 @@ async def curves_with_stock(
     return [(item, int(count)) for item, count in result.all()]
 
 
+async def sku_with_stock(
+    session: AsyncSession,
+    city_id: int,
+) -> list[tuple[StickModel, ColorOption, FlexOption, GripOption, CurveOption, int]]:
+    qty = func.sum(Batch.remaining_quantity)
+    result = await session.execute(
+        select(StickModel, ColorOption, FlexOption, GripOption, CurveOption, qty)
+        .join(Product, Product.model_id == StickModel.id)
+        .join(ColorOption, ColorOption.id == Product.color_id)
+        .join(FlexOption, FlexOption.id == Product.flex_id)
+        .join(GripOption, GripOption.id == Product.grip_id)
+        .join(CurveOption, CurveOption.id == Product.curve_id)
+        .join(Batch, Batch.product_id == Product.id)
+        .where(Batch.city_id == city_id, Batch.remaining_quantity > 0)
+        .group_by(
+            StickModel.id,
+            StickModel.name,
+            ColorOption.id,
+            ColorOption.model_id,
+            ColorOption.name,
+            ColorOption.is_default,
+            FlexOption.id,
+            FlexOption.value,
+            GripOption.id,
+            GripOption.name,
+            CurveOption.id,
+            CurveOption.name,
+        )
+        .order_by(
+            StickModel.name,
+            ColorOption.is_default.desc(),
+            ColorOption.name,
+            FlexOption.value,
+            GripOption.name,
+            CurveOption.name,
+        )
+    )
+    return [
+        (model, color, flex, grip, curve, int(count))
+        for model, color, flex, grip, curve, count in result.all()
+    ]
+
+
 async def batches_in_stock(
     session: AsyncSession,
     *,

@@ -3,18 +3,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from keyboards.callbacks import NavCB
-from keyboards.menu import BTN_SERVICE, BTN_STOCK
+from keyboards.menu import BTN_SERVICE
 from keyboards.service import manage_menu, service_menu
 
 router = Router()
 
 SOON = "Этот раздел подключим на следующем шаге."
-
-
-@router.message(F.text == BTN_STOCK)
-async def open_stock(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer(SOON)
 
 
 @router.message(F.text == BTN_SERVICE)
