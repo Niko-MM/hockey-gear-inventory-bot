@@ -2,11 +2,15 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import settings
 from db import init_db
+from handlers.common import router as common_router
+from handlers.management import router as management_router
+from handlers.menu import router as menu_router
+from middlewares.admin import AdminOnlyMiddleware
+from middlewares.db import DbSessionMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,24 +19,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def cmd_start(message: Message) -> None:
-    user_id = message.from_user.id if message.from_user else 0
-    if not settings.is_admin(user_id):
-        await message.answer("Доступ только для администратора.")
-        return
-
-    await message.answer(
-        "Привет. Это бот учёта товара и продаж.\n"
-        "Скелет запущен: дальше подключим каталог, партии и отчёты."
-    )
-
-
 async def main() -> None:
     await init_db()
 
     bot = Bot(token=settings.bot_token)
-    dp = Dispatcher()
-    dp.message.register(cmd_start, CommandStart())
+    dp = Dispatcher(storage=MemoryStorage())
+    dp.update.middleware(AdminOnlyMiddleware())
+    dp.update.middleware(DbSessionMiddleware())
+    dp.include_router(common_router)
+    dp.include_router(management_router)
+    dp.include_router(menu_router)
 
     logger.info("Бот запущен (polling)")
     await dp.start_polling(bot)

@@ -1,0 +1,12 @@
+from aiogram.filters.callback_data import CallbackData
+
+
+class NavCB(CallbackData, prefix="nav"):
+    to: str
+
+
+class ManageCB(CallbackData, prefix="mgr"):
+    section: str
+    action: str
+    item_id: int = 0
+    model_id: int = 0
