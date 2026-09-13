@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import Batch, City, ColorOption, CurveOption, FlexOption, GripOption, StickModel
 from keyboards.callbacks import SaleCB
 from keyboards.menu import BTN_INCOME, BTN_SALE, BTN_SERVICE, BTN_STOCK
-from keyboards.sale import choice_keyboard, confirm_keyboard, nav_keyboard
+from keyboards.sale import choice_keyboard, confirm_keyboard, nav_keyboard, qty_keyboard
 from repositories import catalog
 from repositories import sellers as sellers_repo
 from repositories import stock
@@ -28,6 +28,7 @@ ID_KEY = {
     "grip": "grip_id",
     "curve": "curve_id",
     "batch": "batch_id",
+    "qty": "quantity",
     "seller": "seller_id",
 }
 
@@ -40,6 +41,8 @@ CLEAR_AFTER = {
         "curve_id",
         "batch_id",
         "saw_batch_step",
+        "quantity",
+        "saw_qty_step",
         "total_amount",
         "seller_id",
     ),
@@ -49,13 +52,40 @@ CLEAR_AFTER = {
         "curve_id",
         "batch_id",
         "saw_batch_step",
+        "quantity",
+        "saw_qty_step",
         "total_amount",
         "seller_id",
     ),
-    "flex": ("grip_id", "curve_id", "batch_id", "saw_batch_step", "total_amount", "seller_id"),
-    "grip": ("curve_id", "batch_id", "saw_batch_step", "total_amount", "seller_id"),
-    "curve": ("batch_id", "saw_batch_step", "total_amount", "seller_id"),
-    "batch": ("total_amount", "seller_id"),
+    "flex": (
+        "grip_id",
+        "curve_id",
+        "batch_id",
+        "saw_batch_step",
+        "quantity",
+        "saw_qty_step",
+        "total_amount",
+        "seller_id",
+    ),
+    "grip": (
+        "curve_id",
+        "batch_id",
+        "saw_batch_step",
+        "quantity",
+        "saw_qty_step",
+        "total_amount",
+        "seller_id",
+    ),
+    "curve": (
+        "batch_id",
+        "saw_batch_step",
+        "quantity",
+        "saw_qty_step",
+        "total_amount",
+        "seller_id",
+    ),
+    "batch": ("quantity", "saw_qty_step", "total_amount", "seller_id"),
+    "qty": ("total_amount", "seller_id"),
     "seller": (),
 }
 
@@ -76,6 +106,7 @@ PROMPT = {
     "grip": "Какой хват?",
     "curve": "Какой загиб?",
     "batch": "Какая партия?",
+    "qty": "Сколько штук?",
     "amount": "Сколько заплатил клиент? Например 18 000",
     "seller": "Кому в кассу?",
 }
@@ -161,6 +192,9 @@ async def _progress_lines(session: AsyncSession, data: dict) -> str:
         batch = await session.get(Batch, batch_id)
         if batch:
             lines.append(f"Закуп: {format_money(batch.purchase_price)}")
+    quantity = _int_data(data, "quantity")
+    if quantity is not None and (quantity > 1 or data.get("saw_qty_step") is True):
+        lines.append(f"Количество: {quantity}")
     raw_amount = data.get("total_amount")
     if isinstance(raw_amount, str):
         lines.append(f"Чек: {format_money(raw_amount)}")
@@ -283,22 +317,48 @@ async def _batches_for_data(session: AsyncSession, data: dict) -> list[Batch]:
     return await stock.batches_in_stock(session, city_id=city_id, product_id=product.id)
 
 
-async def _resolve_step(session: AsyncSession, state: FSMContext, step: str) -> str:
-    if step != "batch":
-        return step
+async def _batch_remaining(session: AsyncSession, data: dict) -> int:
+    batch_id = _int_data(data, "batch_id")
+    if batch_id is None:
+        return 0
+    batch = await session.get(Batch, batch_id)
+    if batch is None:
+        return 0
+    return batch.remaining_quantity
+
+
+async def _resolve_qty(session: AsyncSession, state: FSMContext) -> str:
     data = await state.get_data()
-    batches = await _batches_for_data(session, data)
-    if len(batches) == 1:
-        await state.update_data(batch_id=batches[0].id, saw_batch_step=False)
+    remaining = await _batch_remaining(session, data)
+    if remaining <= 1:
+        await state.update_data(quantity=1, saw_qty_step=False)
         return "amount"
-    if len(batches) > 1:
-        await state.update_data(saw_batch_step=True)
+    await state.update_data(saw_qty_step=True)
+    return "qty"
+
+
+async def _resolve_step(session: AsyncSession, state: FSMContext, step: str) -> str:
+    if step == "batch":
+        data = await state.get_data()
+        batches = await _batches_for_data(session, data)
+        if len(batches) == 1:
+            await state.update_data(batch_id=batches[0].id, saw_batch_step=False)
+            return await _resolve_qty(session, state)
+        if len(batches) > 1:
+            await state.update_data(saw_batch_step=True)
+            return "batch"
         return "batch"
-    return "batch"
+    if step == "qty":
+        return await _resolve_qty(session, state)
+    return step
 
 
 def _back_step(data: dict, current: str) -> str | None:
     if current == "amount":
+        if data.get("saw_qty_step") is True:
+            return "qty"
+        return "batch" if data.get("saw_batch_step") is True else "curve"
+    if current == "qty":
         return "batch" if data.get("saw_batch_step") is True else "curve"
     mapping = {
         "model": "city",
@@ -319,18 +379,35 @@ def _next_after_pick(step: str) -> str | None:
         "flex": "grip",
         "grip": "curve",
         "curve": "batch",
-        "batch": "amount",
+        "batch": "qty",
+        "qty": "amount",
         "seller": "confirm",
     }.get(step)
 
 
-def _screen_text(progress: str, step: str, items: list[tuple[int, int, str]]) -> str:
+def _screen_text(
+    progress: str,
+    step: str,
+    items: list[tuple[int, int, str]],
+    remaining: int = 0,
+) -> str:
     if step in EMPTY_HINT and not items:
         return f"{progress}\n\n{EMPTY_HINT[step]}"
+    if step == "qty":
+        extra = f" На партии {remaining}."
+        if remaining > 10:
+            extra += " Можно написать число."
+        return f"{progress}\n\n{PROMPT[step]}{extra}"
     return f"{progress}\n\n{PROMPT[step]}"
 
 
-def _keyboard(step: str, items: list[tuple[int, int, str]]) -> InlineKeyboardMarkup:
+def _keyboard(
+    step: str,
+    items: list[tuple[int, int, str]],
+    remaining: int = 0,
+) -> InlineKeyboardMarkup:
+    if step == "qty":
+        return qty_keyboard(remaining)
     if step == "amount":
         return nav_keyboard(step, show_back=True)
     if step == "confirm":
@@ -350,17 +427,20 @@ async def _show_step(
     step = await _resolve_step(session, state, step)
     if step == "amount":
         await state.set_state(SaleFlow.amount)
+    elif step == "qty":
+        await state.set_state(SaleFlow.quantity)
     else:
         await state.set_state(None)
 
     data = await state.get_data()
     items = await _choices(session, step, data)
+    remaining = await _batch_remaining(session, data) if step == "qty" else 0
     progress = await _progress_lines(session, data)
     if step == "confirm":
         text = f"{progress}\n\nЗаписать?"
     else:
-        text = _screen_text(progress, step, items)
-    markup = _keyboard(step, items)
+        text = _screen_text(progress, step, items, remaining)
+    markup = _keyboard(step, items, remaining)
 
     target = _callback_message(callback) if callback else None
     if target and not replace:
@@ -445,6 +525,11 @@ async def pick_sale(
             if callback_data.item_id not in {batch.id for batch in batches}:
                 await callback.answer("Этой партии уже нет в остатке.", show_alert=True)
                 return
+        if callback_data.step == "qty":
+            remaining = await _batch_remaining(session, data)
+            if callback_data.item_id < 1 or callback_data.item_id > remaining:
+                await callback.answer("Столько на партии нет.", show_alert=True)
+                return
         if callback_data.step == "seller":
             seller = await sellers_repo.get_seller(session, callback_data.item_id)
             if seller is None:
@@ -460,6 +545,25 @@ async def pick_sale(
         return
     await callback.answer()
     await _show_step(session, state, nxt, callback=callback)
+
+
+@router.message(SaleFlow.quantity, F.text, ~F.text.in_(MENU_TEXTS))
+async def save_quantity(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    cleaned = (message.text or "").strip().replace(" ", "")
+    if not cleaned.isdigit():
+        await message.answer("Нужно целое число, например 3")
+        return
+    quantity = int(cleaned)
+    data = await state.get_data()
+    remaining = await _batch_remaining(session, data)
+    if quantity < 1 or quantity > remaining:
+        await message.answer(f"На партии {remaining} шт. Напиши число от 1 до {remaining}.")
+        return
+    for stale in CLEAR_AFTER["qty"]:
+        data.pop(stale, None)
+    data["quantity"] = quantity
+    await state.set_data(data)
+    await _show_step(session, state, "amount", message=message, replace=True)
 
 
 @router.message(SaleFlow.amount, F.text, ~F.text.in_(MENU_TEXTS))
@@ -481,6 +585,7 @@ async def save_sale(
     data = await state.get_data()
     batch_id = _int_data(data, "batch_id")
     seller_id = _int_data(data, "seller_id")
+    quantity = _int_data(data, "quantity") or 1
     raw_amount = data.get("total_amount")
     if batch_id is None or seller_id is None or not isinstance(raw_amount, str):
         await callback.answer("Сессия сбилась. Начни продажу заново.", show_alert=True)
@@ -492,9 +597,10 @@ async def save_sale(
             batch_id=batch_id,
             seller_id=seller_id,
             total_amount=Decimal(raw_amount),
+            quantity=quantity,
         )
     except OutOfStockError:
-        await callback.answer("Этой клюшки уже нет в остатке.", show_alert=True)
+        await callback.answer("На партии осталось меньше, чем нужно.", show_alert=True)
         return
     summary = await _progress_lines(session, data)
     await state.clear()

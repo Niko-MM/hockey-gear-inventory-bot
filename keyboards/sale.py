@@ -47,6 +47,19 @@ def choice_keyboard(
     return builder.as_markup()
 
 
+def qty_keyboard(remaining: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    shown = min(remaining, 10)
+    for number in range(1, shown + 1):
+        builder.button(
+            text=str(number),
+            callback_data=SaleCB(action="pick", step="qty", item_id=number).pack(),
+        )
+    builder.adjust(5)
+    builder.row(*_nav_row("qty", show_back=True))
+    return builder.as_markup()
+
+
 def nav_keyboard(step: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(*_nav_row(step, show_back=show_back))
