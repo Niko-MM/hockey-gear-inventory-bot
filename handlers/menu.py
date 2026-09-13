@@ -47,13 +47,12 @@ async def cb_manage(callback: CallbackQuery) -> None:
     await callback.answer()
     if callback.message:
         await callback.message.edit_text(
-            "Управление — заготовки для конструктора поступления:\n"
-            "модели, цвета, флекс, загиб, хват.",
+            "Управление — модели, цвета, флекс, загиб, хват и продавцы.",
             reply_markup=manage_menu(),
         )
 
 
-@router.callback_query(NavCB.filter(F.to.in_({"accounting", "edits"})))
+@router.callback_query(NavCB.filter(F.to == "edits"))
 async def cb_soon(callback: CallbackQuery) -> None:
     await callback.answer(SOON, show_alert=True)
 

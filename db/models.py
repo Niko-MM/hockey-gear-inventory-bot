@@ -33,6 +33,23 @@ class City(Base):
     batches: Mapped[list["Batch"]] = relationship(back_populates="city")
 
 
+class Seller(Base):
+    __tablename__ = "sellers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+
+    sales: Mapped[list["Sale"]] = relationship(back_populates="seller")
+    transfers_out: Mapped[list["CashTransfer"]] = relationship(
+        back_populates="from_seller",
+        foreign_keys="CashTransfer.from_seller_id",
+    )
+    transfers_in: Mapped[list["CashTransfer"]] = relationship(
+        back_populates="to_seller",
+        foreign_keys="CashTransfer.to_seller_id",
+    )
+
+
 class StickModel(Base):
     __tablename__ = "models"
 
@@ -152,6 +169,7 @@ class Sale(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), nullable=False)
+    seller_id: Mapped[int | None] = mapped_column(ForeignKey("sellers.id"), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     payment_location: Mapped[PaymentLocation] = mapped_column(nullable=False)
@@ -162,3 +180,34 @@ class Sale(Base):
     )
 
     batch: Mapped[Batch] = relationship(back_populates="sales")
+    seller: Mapped["Seller | None"] = relationship(back_populates="sales")
+
+
+class CashTransfer(Base):
+    __tablename__ = "cash_transfers"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_transfer_amount_positive"),
+        CheckConstraint(
+            "from_seller_id != to_seller_id",
+            name="ck_transfer_different_sellers",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    from_seller_id: Mapped[int] = mapped_column(ForeignKey("sellers.id"), nullable=False)
+    to_seller_id: Mapped[int] = mapped_column(ForeignKey("sellers.id"), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    from_seller: Mapped[Seller] = relationship(
+        back_populates="transfers_out",
+        foreign_keys=[from_seller_id],
+    )
+    to_seller: Mapped[Seller] = relationship(
+        back_populates="transfers_in",
+        foreign_keys=[to_seller_id],
+    )

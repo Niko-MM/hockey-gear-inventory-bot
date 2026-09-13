@@ -6,10 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from keyboards.callbacks import ManageCB
 from keyboards.menu import BTN_INCOME, BTN_SALE, BTN_SERVICE, BTN_STOCK
-from keyboards.service import colors_keyboard, models_keyboard, named_options_keyboard
+from keyboards.service import (
+    colors_keyboard,
+    models_keyboard,
+    named_options_keyboard,
+    sellers_keyboard,
+)
 from repositories import catalog
+from repositories import sellers as sellers_repo
 from repositories.catalog import DuplicateNameError, InUseError
 from states.catalog import AddColor, AddCurve, AddFlex, AddGrip, AddModel
+from states.sellers import AddSeller
 
 router = Router()
 
@@ -36,7 +43,9 @@ async def _show_models(callback: CallbackQuery, session: AsyncSession) -> None:
         await message.edit_text(text, reply_markup=models_keyboard(models))
 
 
-async def _show_colors(callback: CallbackQuery, session: AsyncSession, model_id: int) -> None:
+async def _show_colors(
+    callback: CallbackQuery, session: AsyncSession, model_id: int
+) -> None:
     model = await catalog.get_model(session, model_id)
     if model is None:
         await callback.answer("Модель не найдена.", show_alert=True)
@@ -66,7 +75,9 @@ async def start_add_model(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(AddModel.name, F.text, ~F.text.in_(MENU_TEXTS))
-async def save_model(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def save_model(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
     name = _clean_name(message.text or "")
     if not name:
         await message.answer(NOT_TEXT)
@@ -93,7 +104,9 @@ async def delete_model(
     try:
         await catalog.delete_model(session, callback_data.item_id)
     except InUseError:
-        await callback.answer("Нельзя удалить: модель уже есть в товарах.", show_alert=True)
+        await callback.answer(
+            "Нельзя удалить: модель уже есть в товарах.", show_alert=True
+        )
         return
     await callback.answer("Удалил.")
     await _show_models(callback, session)
@@ -124,7 +137,9 @@ async def start_add_color(
 
 
 @router.message(AddColor.name, F.text, ~F.text.in_(MENU_TEXTS))
-async def save_color(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def save_color(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
     name = _clean_name(message.text or "")
     if not name:
         await message.answer(NOT_TEXT)
@@ -257,11 +272,15 @@ async def save_flex(message: Message, state: FSMContext, session: AsyncSession) 
         return
     await state.clear()
     items = await catalog.list_flex(session)
-    await message.answer("Флекс добавлен.", reply_markup=named_options_keyboard("flex", items, "value"))
+    await message.answer(
+        "Флекс добавлен.", reply_markup=named_options_keyboard("flex", items, "value")
+    )
 
 
 @router.message(AddCurve.name, F.text, ~F.text.in_(MENU_TEXTS))
-async def save_curve(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def save_curve(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
     name = _clean_name(message.text or "")
     if not name:
         await message.answer(NOT_TEXT)
@@ -273,7 +292,9 @@ async def save_curve(message: Message, state: FSMContext, session: AsyncSession)
         return
     await state.clear()
     items = await catalog.list_curves(session)
-    await message.answer("Загиб добавлен.", reply_markup=named_options_keyboard("curve", items, "name"))
+    await message.answer(
+        "Загиб добавлен.", reply_markup=named_options_keyboard("curve", items, "name")
+    )
 
 
 @router.message(AddGrip.name, F.text, ~F.text.in_(MENU_TEXTS))
@@ -289,7 +310,9 @@ async def save_grip(message: Message, state: FSMContext, session: AsyncSession) 
         return
     await state.clear()
     items = await catalog.list_grips(session)
-    await message.answer("Хват добавлен.", reply_markup=named_options_keyboard("grip", items, "name"))
+    await message.answer(
+        "Хват добавлен.", reply_markup=named_options_keyboard("grip", items, "name")
+    )
 
 
 @router.callback_query(ManageCB.filter((F.section == "flex") & (F.action == "del")))
@@ -301,7 +324,9 @@ async def delete_flex(
     try:
         await catalog.delete_flex(session, callback_data.item_id)
     except InUseError:
-        await callback.answer("Нельзя удалить: флекс уже используется.", show_alert=True)
+        await callback.answer(
+            "Нельзя удалить: флекс уже используется.", show_alert=True
+        )
         return
     await callback.answer("Удалил.")
     await _show_flex(callback, session)
@@ -316,7 +341,9 @@ async def delete_curve(
     try:
         await catalog.delete_curve(session, callback_data.item_id)
     except InUseError:
-        await callback.answer("Нельзя удалить: загиб уже используется.", show_alert=True)
+        await callback.answer(
+            "Нельзя удалить: загиб уже используется.", show_alert=True
+        )
         return
     await callback.answer("Удалил.")
     await _show_curves(callback, session)
@@ -335,3 +362,62 @@ async def delete_grip(
         return
     await callback.answer("Удалил.")
     await _show_grips(callback, session)
+
+
+async def _show_sellers(callback: CallbackQuery, session: AsyncSession) -> None:
+    items = await sellers_repo.list_sellers(session)
+    message = _callback_message(callback)
+    if message:
+        await message.edit_text(
+            "Продавцы. В конце продажи админ выберет, у кого осели деньги.",
+            reply_markup=sellers_keyboard(items),
+        )
+
+
+@router.callback_query(ManageCB.filter((F.section == "seller") & (F.action == "list")))
+async def list_sellers(callback: CallbackQuery, session: AsyncSession) -> None:
+    await callback.answer()
+    await _show_sellers(callback, session)
+
+
+@router.callback_query(ManageCB.filter((F.section == "seller") & (F.action == "add")))
+async def start_add_seller(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AddSeller.name)
+    await callback.answer()
+    message = _callback_message(callback)
+    if message:
+        await message.answer("Напиши имя продавца. /cancel — отмена.")
+
+
+@router.message(AddSeller.name, F.text, ~F.text.in_(MENU_TEXTS))
+async def save_seller(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    name = _clean_name(message.text or "")
+    if not name:
+        await message.answer(NOT_TEXT)
+        return
+    try:
+        await sellers_repo.create_seller(session, name)
+    except DuplicateNameError:
+        await message.answer("Такой продавец уже есть.")
+        return
+    await state.clear()
+    items = await sellers_repo.list_sellers(session)
+    await message.answer(f"Продавец «{name}» добавлен.", reply_markup=sellers_keyboard(items))
+
+
+@router.callback_query(ManageCB.filter((F.section == "seller") & (F.action == "del")))
+async def delete_seller(
+    callback: CallbackQuery,
+    callback_data: ManageCB,
+    session: AsyncSession,
+) -> None:
+    try:
+        await sellers_repo.delete_seller(session, callback_data.item_id)
+    except InUseError:
+        await callback.answer(
+            "Нельзя удалить: есть продажи или переводы.",
+            show_alert=True,
+        )
+        return
+    await callback.answer("Удалил.")
+    await _show_sellers(callback, session)
