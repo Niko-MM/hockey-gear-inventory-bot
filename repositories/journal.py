@@ -228,14 +228,14 @@ async def get_entry(session: AsyncSession, kind: str, item_id: int) -> JournalEn
 async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
     entry = await get_entry(session, kind, item_id)
     if entry is None:
-        raise CannotUndoError("Запись уже удалена.")
+        raise CannotUndoError("Этой записи уже нет.")
     if not entry.can_undo:
-        raise CannotUndoError(entry.block_reason or "Это уже нельзя удалить.")
+        raise CannotUndoError(entry.block_reason or "Это уже нельзя отменить.")
 
     if kind == "sale":
         sale = await session.get(Sale, item_id)
         if sale is None:
-            raise CannotUndoError("Запись уже удалена.")
+            raise CannotUndoError("Этой записи уже нет.")
         try:
             await delete_sale(session, sale)
         except OutOfStockError as exc:
@@ -244,7 +244,7 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
     if kind == "income":
         batch = await session.get(Batch, item_id, options=[selectinload(Batch.sales)])
         if batch is None:
-            raise CannotUndoError("Запись уже удалена.")
+            raise CannotUndoError("Этой записи уже нет.")
         if batch.sales or batch.remaining_quantity != batch.quantity_in:
             raise CannotUndoError("С этой партии уже продавали.")
         await session.delete(batch)
@@ -252,13 +252,13 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
     if kind == "transfer":
         row = await session.get(CashTransfer, item_id)
         if row is None:
-            raise CannotUndoError("Запись уже удалена.")
+            raise CannotUndoError("Этой записи уже нет.")
         await session.delete(row)
         return
     if kind == "withdraw":
         row = await session.get(CashWithdrawal, item_id)
         if row is None:
-            raise CannotUndoError("Запись уже удалена.")
+            raise CannotUndoError("Этой записи уже нет.")
         await session.delete(row)
         return
     raise CannotUndoError("Неизвестная операция.")

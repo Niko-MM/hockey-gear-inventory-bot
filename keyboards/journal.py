@@ -31,7 +31,7 @@ def journal_card_keyboard(entry: JournalEntry) -> InlineKeyboardMarkup:
     if entry.can_undo:
         builder.row(
             InlineKeyboardButton(
-                text="Удалить",
+                text="Отменить",
                 callback_data=JournalCB(
                     action="ask",
                     kind=entry.kind,
@@ -49,7 +49,7 @@ def journal_confirm_keyboard(kind: str, item_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="Удалить",
+            text="Отменить",
             callback_data=JournalCB(action="undo", kind=kind, item_id=item_id).pack(),
         )
     )
