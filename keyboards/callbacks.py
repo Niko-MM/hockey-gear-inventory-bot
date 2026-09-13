@@ -10,3 +10,9 @@ class ManageCB(CallbackData, prefix="mgr"):
     action: str
     item_id: int = 0
     model_id: int = 0
+
+
+class IncomeCB(CallbackData, prefix="inc"):
+    action: str
+    step: str = ""
+    item_id: int = 0

@@ -162,3 +162,35 @@ async def delete_grip(session: AsyncSession, grip_id: int) -> None:
     if used:
         raise InUseError
     await session.delete(item)
+
+
+async def get_or_create_product(
+    session: AsyncSession,
+    *,
+    model_id: int,
+    color_id: int,
+    flex_id: int,
+    curve_id: int,
+    grip_id: int,
+) -> Product:
+    existing = await session.scalar(
+        select(Product).where(
+            Product.model_id == model_id,
+            Product.color_id == color_id,
+            Product.flex_id == flex_id,
+            Product.curve_id == curve_id,
+            Product.grip_id == grip_id,
+        )
+    )
+    if existing is not None:
+        return existing
+    product = Product(
+        model_id=model_id,
+        color_id=color_id,
+        flex_id=flex_id,
+        curve_id=curve_id,
+        grip_id=grip_id,
+    )
+    session.add(product)
+    await session.flush()
+    return product
