@@ -142,6 +142,9 @@ def _format_report(report: reports_repo.PeriodReport) -> str:
         lines.extend(["", "Продажи"])
         lines.extend(f"{name} — {qty} шт" for name, qty in report.cities)
         lines.append(f"Всего — {report.total_qty} шт · {_cheques(report.receipts)}")
+        if report.sales_by_model:
+            lines.extend(["", "Модели"])
+            lines.extend(f"{name} — {qty} шт" for name, qty in report.sales_by_model)
         lines.extend(
             [
                 "",

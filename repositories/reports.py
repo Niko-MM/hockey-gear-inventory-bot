@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Batch, CashTransfer, CashWithdrawal, City, Sale, Seller, StockWriteOff
+from db.models import Batch, CashTransfer, CashWithdrawal, City, Product, Sale, Seller, StickModel, StockWriteOff
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,7 @@ class PeriodReport:
     revenue: Decimal
     cost: Decimal
     profit: Decimal
+    sales_by_model: list[tuple[str, int]]
     sales_by_seller: list[tuple[str, Decimal, int]]
     incoming_by_city: list[tuple[str, int, Decimal]]
     transfers: list[tuple[str, str, Decimal]]
@@ -43,6 +44,19 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
     )
     cities = [(name, int(qty)) for name, qty in city_rows.all()]
     total_qty = sum(qty for _, qty in cities)
+
+    qty_by_model = func.coalesce(func.sum(Sale.quantity), 0)
+    model_rows = await session.execute(
+        select(StickModel.name, qty_by_model)
+        .select_from(Sale)
+        .join(Batch, Sale.batch_id == Batch.id)
+        .join(Product, Batch.product_id == Product.id)
+        .join(StickModel, Product.model_id == StickModel.id)
+        .where(from_day, to_day)
+        .group_by(StickModel.name)
+        .order_by(qty_by_model.desc(), StickModel.name)
+    )
+    sales_by_model = [(name, int(qty)) for name, qty in model_rows.all()]
 
     receipts = int(
         await session.scalar(select(func.count()).select_from(Sale).where(from_day, to_day)) or 0
@@ -144,6 +158,7 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
         revenue=revenue_dec,
         cost=cost_dec,
         profit=profit,
+        sales_by_model=sales_by_model,
         sales_by_seller=sales_by_seller,
         incoming_by_city=incoming_by_city,
         transfers=transfers,
