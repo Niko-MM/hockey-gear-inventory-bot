@@ -1,7 +1,7 @@
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import ColorOption, CurveOption, FlexOption, GripOption, Product, StickModel
+from db.models import Batch, ColorOption, CurveOption, FlexOption, GripOption, Product, StickModel
 from db.seed import ensure_default_color
 
 
@@ -11,6 +11,34 @@ class DuplicateNameError(Exception):
 
 class InUseError(Exception):
     pass
+
+
+async def _batches_using(session: AsyncSession, column: ColumnElement[int], item_id: int) -> int:
+    count = await session.scalar(
+        select(func.count())
+        .select_from(Batch)
+        .join(Product, Product.id == Batch.product_id)
+        .where(column == item_id)
+    )
+    return int(count or 0)
+
+
+async def _delete_orphan_products(session: AsyncSession, *filters: ColumnElement[bool]) -> None:
+    has_batch = select(Batch.id).where(Batch.product_id == Product.id).exists()
+    result = await session.execute(select(Product).where(*filters, ~has_batch))
+    for product in result.scalars().all():
+        await session.delete(product)
+
+
+async def remove_product_if_unused(session: AsyncSession, product_id: int) -> None:
+    remaining = await session.scalar(
+        select(func.count()).select_from(Batch).where(Batch.product_id == product_id)
+    )
+    if remaining:
+        return
+    product = await session.get(Product, product_id)
+    if product is not None:
+        await session.delete(product)
 
 
 async def list_models(session: AsyncSession) -> list[StickModel]:
@@ -37,11 +65,9 @@ async def delete_model(session: AsyncSession, model_id: int) -> None:
     model = await session.get(StickModel, model_id)
     if model is None:
         return
-    used = await session.scalar(
-        select(func.count()).select_from(Product).where(Product.model_id == model_id)
-    )
-    if used:
+    if await _batches_using(session, Product.model_id, model_id):
         raise InUseError
+    await _delete_orphan_products(session, Product.model_id == model_id)
     await session.delete(model)
 
 
@@ -75,11 +101,9 @@ async def delete_color(session: AsyncSession, color_id: int) -> None:
         return
     if color.is_default:
         raise InUseError
-    used = await session.scalar(
-        select(func.count()).select_from(Product).where(Product.color_id == color_id)
-    )
-    if used:
+    if await _batches_using(session, Product.color_id, color_id):
         raise InUseError
+    await _delete_orphan_products(session, Product.color_id == color_id)
     await session.delete(color)
 
 
@@ -102,11 +126,9 @@ async def delete_flex(session: AsyncSession, flex_id: int) -> None:
     item = await session.get(FlexOption, flex_id)
     if item is None:
         return
-    used = await session.scalar(
-        select(func.count()).select_from(Product).where(Product.flex_id == flex_id)
-    )
-    if used:
+    if await _batches_using(session, Product.flex_id, flex_id):
         raise InUseError
+    await _delete_orphan_products(session, Product.flex_id == flex_id)
     await session.delete(item)
 
 
@@ -129,11 +151,9 @@ async def delete_curve(session: AsyncSession, curve_id: int) -> None:
     item = await session.get(CurveOption, curve_id)
     if item is None:
         return
-    used = await session.scalar(
-        select(func.count()).select_from(Product).where(Product.curve_id == curve_id)
-    )
-    if used:
+    if await _batches_using(session, Product.curve_id, curve_id):
         raise InUseError
+    await _delete_orphan_products(session, Product.curve_id == curve_id)
     await session.delete(item)
 
 
@@ -156,11 +176,9 @@ async def delete_grip(session: AsyncSession, grip_id: int) -> None:
     item = await session.get(GripOption, grip_id)
     if item is None:
         return
-    used = await session.scalar(
-        select(func.count()).select_from(Product).where(Product.grip_id == grip_id)
-    )
-    if used:
+    if await _batches_using(session, Product.grip_id, grip_id):
         raise InUseError
+    await _delete_orphan_products(session, Product.grip_id == grip_id)
     await session.delete(item)
 
 

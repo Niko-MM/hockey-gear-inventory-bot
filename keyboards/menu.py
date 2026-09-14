@@ -2,7 +2,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 BTN_SALE = "Продажа"
 BTN_INCOME = "Поступление"
-BTN_STOCK = "Остатки"
+BTN_STOCK = "В наличии"
 BTN_SERVICE = "Сервис"
 
 

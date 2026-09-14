@@ -15,6 +15,7 @@ from handlers.management import router as management_router
 from handlers.menu import router as menu_router
 from handlers.sale import router as sale_router
 from handlers.stock import router as stock_router
+from handlers.writeoff import router as writeoff_router
 from middlewares.admin import AdminOnlyMiddleware
 from middlewares.db import DbSessionMiddleware
 
@@ -38,6 +39,7 @@ async def main() -> None:
     dp.include_router(income_router)
     dp.include_router(sale_router)
     dp.include_router(stock_router)
+    dp.include_router(writeoff_router)
     dp.include_router(journal_router)
     dp.include_router(menu_router)
 

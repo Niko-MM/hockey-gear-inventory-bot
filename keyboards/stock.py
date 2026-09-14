@@ -32,12 +32,6 @@ def cities_keyboard(rows: Sequence[tuple[City, int]]) -> InlineKeyboardMarkup:
 
 def grips_keyboard(city_id: int, items: Sequence[tuple[int, str, int]]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(
-            text="Все клюшки",
-            callback_data=StockCB(action="view", city_id=city_id).pack(),
-        )
-    )
     for grip_id, title, qty in items:
         builder.row(
             InlineKeyboardButton(

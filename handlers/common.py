@@ -11,7 +11,7 @@ router = Router()
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await message.answer(
-        "Учёт клюшек. Продажа, поступление, остатки и кассы — кнопки внизу.",
+        "Учёт клюшек. Продажа, поступление, наличие и кассы — кнопки внизу.",
         reply_markup=main_menu(),
     )
 

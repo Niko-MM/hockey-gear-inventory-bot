@@ -33,23 +33,29 @@ def _color_title(color: ColorOption) -> str:
     return color.name
 
 
-def _format_all(city_name: str, total: int, rows: list[tuple]) -> str:
-    lines = [f"{city_name} — {total} шт"]
+def _format_stock(header: str, rows: list[tuple], *, hide: frozenset[str]) -> str:
+    lines = [header]
     current_group = ""
     for model, color, flex, grip, curve, qty in rows:
         group = f"{model.name} / {_color_title(color)}"
+        bits: list[str] = []
+        if "flex" not in hide:
+            bits.append(flex.value)
+        if "grip" not in hide:
+            bits.append(grip.name)
+        if "curve" not in hide:
+            bits.append(curve.name)
+        if not bits:
+            if group != current_group:
+                lines.append("")
+            lines.append(f"{group} — {qty}")
+            current_group = group
+            continue
         if group != current_group:
             lines.append("")
             lines.append(group)
             current_group = group
-        lines.append(f"• {flex.value} · {grip.name} · {curve.name} — {qty}")
-    return "\n".join(lines)
-
-
-def _format_chain(header: str, rows: list[tuple]) -> str:
-    lines = [header, ""]
-    for model, color, *_rest, qty in rows:
-        lines.append(f"{model.name} / {_color_title(color)} — {qty}")
+        lines.append(f"• {' · '.join(bits)} — {qty}")
     return "\n".join(lines)
 
 
@@ -97,7 +103,7 @@ async def _show_cities(
 ) -> None:
     rows = await stock.cities_with_stock(session)
     if not rows:
-        text = "Остатков нет. Сначала поступление."
+        text = "В наличии ничего нет. Сначала поступление."
         markup = None
     else:
         text = "Какой город?"
@@ -145,22 +151,25 @@ async def _show_flexes(
         return
     raw = await stock.flexes_in_city(session, city_id, grip_id=grip_id)
     items = [(item.id, item.value, qty) for item, qty in raw]
-    message = _callback_message(callback)
-    if not message:
+    rows = await stock.sku_with_stock(session, city_id, grip_id=grip_id)
+    if not items or not rows:
+        message = _callback_message(callback)
+        if message:
+            await message.edit_text(
+                f"{city.name} · {grip.name} — пусто.",
+                reply_markup=grips_keyboard(
+                    city_id,
+                    [(item.id, item.name, qty) for item, qty in await stock.grips_in_city(session, city_id)],
+                ),
+            )
         return
-    if not items:
-        await message.edit_text(
-            f"{city.name} · {grip.name} — пусто.",
-            reply_markup=grips_keyboard(
-                city_id,
-                [(item.id, item.name, qty) for item, qty in await stock.grips_in_city(session, city_id)],
-            ),
-        )
-        return
-    await message.edit_text(
-        f"{city.name} · {grip.name}. Какой флекс?",
-        reply_markup=flexes_keyboard(city_id, grip_id, items),
+    total = sum(qty for *_, qty in rows)
+    text = _format_stock(
+        f"{city.name} · {grip.name} — {total} шт",
+        rows,
+        hide=frozenset({"grip"}),
     )
+    await _send_text(callback, f"{text}\n\nКакой флекс?", flexes_keyboard(city_id, grip_id, items))
 
 
 async def _show_curves(
@@ -178,25 +187,32 @@ async def _show_curves(
         return
     raw = await stock.curves_in_city(session, city_id, grip_id=grip_id, flex_id=flex_id)
     items = [(item.id, item.name, qty) for item, qty in raw]
-    message = _callback_message(callback)
-    if not message:
+    rows = await stock.sku_with_stock(session, city_id, grip_id=grip_id, flex_id=flex_id)
+    if not items or not rows:
+        message = _callback_message(callback)
+        if message:
+            await message.edit_text(
+                f"{city.name} · {grip.name} · {flex.value} — пусто.",
+                reply_markup=flexes_keyboard(
+                    city_id,
+                    grip_id,
+                    [
+                        (item.id, item.value, qty)
+                        for item, qty in await stock.flexes_in_city(session, city_id, grip_id=grip_id)
+                    ],
+                ),
+            )
         return
-    if not items:
-        await message.edit_text(
-            f"{city.name} · {grip.name} · {flex.value} — пусто.",
-            reply_markup=flexes_keyboard(
-                city_id,
-                grip_id,
-                [
-                    (item.id, item.value, qty)
-                    for item, qty in await stock.flexes_in_city(session, city_id, grip_id=grip_id)
-                ],
-            ),
-        )
-        return
-    await message.edit_text(
-        f"{city.name} · {grip.name} · {flex.value}. Какой загиб?",
-        reply_markup=curves_keyboard(city_id, grip_id, flex_id, items),
+    total = sum(qty for *_, qty in rows)
+    text = _format_stock(
+        f"{city.name} · {grip.name} · {flex.value} — {total} шт",
+        rows,
+        hide=frozenset({"grip", "flex"}),
+    )
+    await _send_text(
+        callback,
+        f"{text}\n\nКакой загиб?",
+        curves_keyboard(city_id, grip_id, flex_id, items),
     )
 
 
@@ -213,14 +229,8 @@ async def _show_view(
         await callback.answer("Город не найден.", show_alert=True)
         return
 
-    if not grip_id:
-        rows = await stock.sku_with_stock(session, city_id)
-        if not rows:
-            text = f"{city.name} — пусто."
-        else:
-            total = sum(qty for *_, qty in rows)
-            text = _format_all(city.name, total, rows)
-        await _send_text(callback, text, back_keyboard(city_id))
+    if not grip_id or not flex_id or not curve_id:
+        await callback.answer("Не найдено.", show_alert=True)
         return
 
     grip = await session.get(GripOption, grip_id)
@@ -242,7 +252,11 @@ async def _show_view(
         text = f"{header_bits} — пусто."
     else:
         total = sum(qty for *_, qty in rows)
-        text = _format_chain(f"{header_bits} — {total} шт", rows)
+        text = _format_stock(
+            f"{header_bits} — {total} шт",
+            rows,
+            hide=frozenset({"grip", "flex", "curve"}),
+        )
     await _send_text(callback, text, back_keyboard(city_id, grip_id=grip_id, flex_id=flex_id))
 
 

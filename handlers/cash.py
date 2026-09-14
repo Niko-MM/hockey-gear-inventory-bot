@@ -1,6 +1,7 @@
 # pyright: reportUnusedCallResult=false
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -13,6 +14,7 @@ from keyboards.cash import (
     cash_menu,
     cash_nav_keyboard,
     pick_seller_keyboard,
+    report_end_keyboard,
     report_keyboard,
     withdraw_confirm_keyboard,
 )
@@ -25,6 +27,11 @@ from states.sellers import ReportPeriod, TransferCash, WithdrawCash
 from utils.money import format_money, parse_money
 
 router = Router()
+
+try:
+    BUSINESS_TZ = ZoneInfo("Europe/Samara")
+except ZoneInfoNotFoundError:
+    BUSINESS_TZ = timezone(timedelta(hours=4))
 
 MENU_TEXTS = {BTN_SALE, BTN_INCOME, BTN_STOCK, BTN_SERVICE}
 MONTHS = (
@@ -67,15 +74,47 @@ async def _delete_prompt(bot: Bot, state: FSMContext) -> None:
         pass
 
 
+def _today() -> date:
+    return datetime.now(BUSINESS_TZ).date()
+
+
+def _format_input_date(value: date) -> str:
+    return f"{value.day:02d}.{value.month:02d}.{value.year % 100:02d}"
+
+
 def _parse_date(text: str) -> date | None:
     parts = text.strip().split(".")
     if len(parts) != 3:
         return None
+    day_raw, month_raw, year_raw = parts
+    if len(year_raw) not in (2, 4):
+        return None
     try:
-        day, month, year = (int(part) for part in parts)
+        day = int(day_raw)
+        month = int(month_raw)
+        year = int(year_raw)
+    except ValueError:
+        return None
+    if year < 100:
+        year += 2000
+    try:
         return date(year, month, day)
     except ValueError:
         return None
+
+
+def _cheques(n: int) -> str:
+    n100 = abs(n) % 100
+    n10 = n100 % 10
+    if 11 <= n100 <= 14:
+        word = "чеков"
+    elif n10 == 1:
+        word = "чек"
+    elif 2 <= n10 <= 4:
+        word = "чека"
+    else:
+        word = "чеков"
+    return f"{n} {word}"
 
 
 def _format_range(start: date, end: date) -> str:
@@ -87,27 +126,66 @@ def _format_range(start: date, end: date) -> str:
 
 
 def _format_report(report: reports_repo.PeriodReport) -> str:
-    lines = [_format_range(report.start, report.end), ""]
-    if report.total_qty == 0:
-        lines.append("Продаж не было.")
-    else:
-        lines.append("Клюшки")
-        lines.extend(f"{name} — {qty}" for name, qty in report.cities)
-        lines.append(f"Всего — {report.total_qty}")
-        lines.append("")
-        lines.append(f"Выручка — {format_money(report.revenue)}")
-        lines.append(f"Прибыль — {format_money(report.profit)}")
-        if report.sales_by_seller:
-            lines.append("")
-            lines.append("С продаж за эти дни")
-            lines.extend(
-                f"{name} — {format_money(amount)}" for name, amount in report.sales_by_seller
-            )
-    if report.withdrawals_by_seller:
-        lines.append("")
-        lines.append("Забрал")
+    lines = [_format_range(report.start, report.end)]
+    has_sales = report.total_qty > 0 or report.receipts > 0
+    has_other = bool(
+        report.incoming_by_city
+        or report.transfers
+        or report.withdrawals_by_seller
+        or report.writeoffs_by_city
+    )
+    if not has_sales and not has_other:
+        lines.extend(["", "За этот период ничего не было."])
+        return "\n".join(lines)
+
+    if has_sales:
+        lines.extend(["", "Продажи"])
+        lines.extend(f"{name} — {qty} шт" for name, qty in report.cities)
+        lines.append(f"Всего — {report.total_qty} шт · {_cheques(report.receipts)}")
         lines.extend(
-            f"{name} — {format_money(amount)}" for name, amount in report.withdrawals_by_seller
+            [
+                "",
+                "Деньги",
+                f"Выручка — {format_money(report.revenue)}",
+                f"Закуп — {format_money(report.cost)}",
+                f"Прибыль — {format_money(report.profit)}",
+            ]
+        )
+        if report.receipts:
+            lines.append(f"Средний чек — {format_money(report.revenue / report.receipts)}")
+        if report.sales_by_seller:
+            lines.extend(["", "Кассы (пришло с продаж)"])
+            lines.extend(
+                f"{name} — {format_money(amount)} · {qty} шт"
+                for name, amount, qty in report.sales_by_seller
+            )
+
+    if report.incoming_by_city:
+        lines.extend(["", "Поступило на склад"])
+        lines.extend(
+            f"{name} — {qty} шт · закуп {format_money(amount)}"
+            for name, qty, amount in report.incoming_by_city
+        )
+
+    if report.transfers:
+        lines.extend(["", "Переводы"])
+        lines.extend(
+            f"{source} → {target} — {format_money(amount)}"
+            for source, target, amount in report.transfers
+        )
+
+    if report.withdrawals_by_seller:
+        lines.extend(["", "Забрали"])
+        lines.extend(
+            f"{name} — {format_money(amount)}"
+            for name, amount in report.withdrawals_by_seller
+        )
+
+    if report.writeoffs_by_city:
+        lines.extend(["", "Списали"])
+        lines.extend(
+            f"{name} — {qty} шт · закуп {format_money(amount)}"
+            for name, qty, amount in report.writeoffs_by_city
         )
     return "\n".join(lines)
 
@@ -336,6 +414,39 @@ async def save_withdraw(callback: CallbackQuery, session: AsyncSession, state: F
         await message.answer(text, reply_markup=cash_menu(rows))
 
 
+def _report_start_prompt() -> str:
+    return f"С какого числа? Сегодня {_format_input_date(_today())}"
+
+
+def _report_end_prompt() -> str:
+    return f"По какое число? Сегодня {_format_input_date(_today())}"
+
+
+async def _finish_report(
+    session: AsyncSession,
+    state: FSMContext,
+    start: date,
+    end: date,
+    *,
+    message: Message | None = None,
+    callback: CallbackQuery | None = None,
+) -> None:
+    report = await reports_repo.period_report(session, start, end)
+    text = _format_report(report)
+    markup = report_keyboard()
+    if callback:
+        await state.clear()
+        await callback.answer()
+        target = _callback_message(callback)
+        if target:
+            await target.edit_text(text, reply_markup=markup)
+        return
+    if message:
+        await _delete_prompt(message.bot, state)
+        await state.clear()
+        await message.answer(text, reply_markup=markup)
+
+
 @router.callback_query(ManageCB.filter((F.section == "cash") & (F.action == "report")))
 async def start_report(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
@@ -343,7 +454,7 @@ async def start_report(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     message = _callback_message(callback)
     if message:
-        await message.edit_text("С какого числа? Например 01.09.2026", reply_markup=cash_nav_keyboard())
+        await message.edit_text(_report_start_prompt(), reply_markup=cash_nav_keyboard())
         await _remember_prompt(state, message)
 
 
@@ -351,12 +462,12 @@ async def start_report(callback: CallbackQuery, state: FSMContext) -> None:
 async def save_report_start(message: Message, state: FSMContext) -> None:
     start = _parse_date(message.text or "")
     if start is None:
-        await message.answer("Напиши дату так: 01.09.2026")
+        await message.answer(f"Напиши дату так: {_format_input_date(_today())}")
         return
     await state.update_data(report_start=start.isoformat())
     await state.set_state(ReportPeriod.end)
     await _delete_prompt(message.bot, state)
-    sent = await message.answer("По какое число? Например 13.09.2026", reply_markup=cash_nav_keyboard())
+    sent = await message.answer(_report_end_prompt(), reply_markup=report_end_keyboard())
     await _remember_prompt(state, sent)
 
 
@@ -364,7 +475,7 @@ async def save_report_start(message: Message, state: FSMContext) -> None:
 async def save_report_end(message: Message, state: FSMContext, session: AsyncSession) -> None:
     end = _parse_date(message.text or "")
     if end is None:
-        await message.answer("Напиши дату так: 13.09.2026")
+        await message.answer(f"Напиши дату так: {_format_input_date(_today())}")
         return
     data = await state.get_data()
     raw_start = data.get("report_start")
@@ -376,7 +487,23 @@ async def save_report_end(message: Message, state: FSMContext, session: AsyncSes
     if start > end:
         await message.answer("Начало позже конца. Напиши ещё раз.")
         return
-    report = await reports_repo.period_report(session, start, end)
-    await _delete_prompt(message.bot, state)
-    await state.clear()
-    await message.answer(_format_report(report), reply_markup=report_keyboard())
+    await _finish_report(session, state, start, end, message=message)
+
+
+@router.callback_query(
+    ReportPeriod.end,
+    ManageCB.filter((F.section == "cash") & (F.action == "report_today")),
+)
+async def report_today(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    data = await state.get_data()
+    raw_start = data.get("report_start")
+    if not isinstance(raw_start, str):
+        await callback.answer("Начни отчёт заново.", show_alert=True)
+        await state.clear()
+        return
+    start = date.fromisoformat(raw_start)
+    end = _today()
+    if start > end:
+        await callback.answer("Начало позже сегодня. Напиши дату конца.", show_alert=True)
+        return
+    await _finish_report(session, state, start, end, callback=callback)

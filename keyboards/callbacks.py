@@ -37,3 +37,10 @@ class JournalCB(CallbackData, prefix="jrn"):
     action: str
     kind: str = ""
     item_id: int = 0
+
+
+class WriteoffCB(CallbackData, prefix="wof"):
+    action: str
+    step: str = ""
+    item_id: int = 0
+    extra_id: int = 0

@@ -10,6 +10,7 @@ from keyboards.callbacks import ManageCB, NavCB
 def service_menu() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Кассы", callback_data=NavCB(to="accounting").pack())
+    builder.button(text="Списать", callback_data=NavCB(to="writeoff").pack())
     builder.button(text="Справочник", callback_data=NavCB(to="manage").pack())
     builder.button(text="Журнал", callback_data=NavCB(to="edits").pack())
     builder.adjust(1)
