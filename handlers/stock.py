@@ -132,10 +132,30 @@ async def _show_grips(callback: CallbackQuery, session: AsyncSession, city_id: i
             reply_markup=back_to_cities_keyboard(),
         )
         return
+    total = sum(qty for _, _, qty in items)
     await message.edit_text(
         f"{city.name}. Какой хват?",
-        reply_markup=grips_keyboard(city_id, items),
+        reply_markup=grips_keyboard(city_id, items, total),
     )
+
+
+async def _show_all(callback: CallbackQuery, session: AsyncSession, city_id: int) -> None:
+    city = await session.get(City, city_id)
+    if city is None:
+        await callback.answer("Город не найден.", show_alert=True)
+        return
+    rows = await stock.sku_with_stock(session, city_id)
+    if not rows:
+        message = _callback_message(callback)
+        if message:
+            await message.edit_text(
+                f"{city.name} — пусто.",
+                reply_markup=back_to_cities_keyboard(),
+            )
+        return
+    total = sum(qty for *_, qty in rows)
+    text = _format_stock(f"{city.name} — {total} шт", rows, hide=frozenset())
+    await _send_text(callback, text, back_keyboard(city_id))
 
 
 async def _show_flexes(
@@ -155,11 +175,14 @@ async def _show_flexes(
     if not items or not rows:
         message = _callback_message(callback)
         if message:
+            grips = await stock.grips_in_city(session, city_id)
+            grip_items = [(item.id, item.name, qty) for item, qty in grips]
             await message.edit_text(
                 f"{city.name} · {grip.name} — пусто.",
                 reply_markup=grips_keyboard(
                     city_id,
-                    [(item.id, item.name, qty) for item, qty in await stock.grips_in_city(session, city_id)],
+                    grip_items,
+                    sum(qty for _, _, qty in grip_items),
                 ),
             )
         return
@@ -280,6 +303,16 @@ async def open_grips(
 ) -> None:
     await callback.answer()
     await _show_grips(callback, session, callback_data.city_id)
+
+
+@router.callback_query(StockCB.filter(F.action == "all"))
+async def open_all(
+    callback: CallbackQuery,
+    callback_data: StockCB,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    await _show_all(callback, session, callback_data.city_id)
 
 
 @router.callback_query(StockCB.filter(F.action == "flexes"))

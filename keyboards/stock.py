@@ -30,7 +30,11 @@ def cities_keyboard(rows: Sequence[tuple[City, int]]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def grips_keyboard(city_id: int, items: Sequence[tuple[int, str, int]]) -> InlineKeyboardMarkup:
+def grips_keyboard(
+    city_id: int,
+    items: Sequence[tuple[int, str, int]],
+    total: int,
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for grip_id, title, qty in items:
         builder.row(
@@ -39,6 +43,12 @@ def grips_keyboard(city_id: int, items: Sequence[tuple[int, str, int]]) -> Inlin
                 callback_data=StockCB(action="flexes", city_id=city_id, grip_id=grip_id).pack(),
             )
         )
+    builder.row(
+        InlineKeyboardButton(
+            text=f"Общее — {total} шт",
+            callback_data=StockCB(action="all", city_id=city_id).pack(),
+        )
+    )
     builder.row(
         InlineKeyboardButton(
             text="« Города",
