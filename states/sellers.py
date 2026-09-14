@@ -13,6 +13,10 @@ class WithdrawCash(StatesGroup):
     amount = State()
 
 
+class DepositCash(StatesGroup):
+    amount = State()
+
+
 class ReportPeriod(StatesGroup):
     start = State()
     end = State()

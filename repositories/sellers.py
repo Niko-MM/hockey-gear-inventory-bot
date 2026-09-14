@@ -3,7 +3,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import CashTransfer, CashWithdrawal, Sale, Seller
+from db.models import CashDeposit, CashTransfer, CashWithdrawal, Sale, Seller
 from repositories.catalog import DuplicateNameError, InUseError
 
 
@@ -52,7 +52,12 @@ async def delete_seller(session: AsyncSession, seller_id: int) -> None:
         .select_from(CashWithdrawal)
         .where(CashWithdrawal.seller_id == seller_id)
     )
-    if sales_count or transfers_count or withdrawals_count:
+    deposits_count = await session.scalar(
+        select(func.count())
+        .select_from(CashDeposit)
+        .where(CashDeposit.seller_id == seller_id)
+    )
+    if sales_count or transfers_count or withdrawals_count or deposits_count:
         raise InUseError
     await session.delete(seller)
 
@@ -76,7 +81,18 @@ async def seller_balance(session: AsyncSession, seller_id: int) -> Decimal:
             CashWithdrawal.seller_id == seller_id
         )
     )
-    return Decimal(sales_total) + Decimal(incoming) - Decimal(outgoing) - Decimal(taken)
+    deposited = await session.scalar(
+        select(func.coalesce(func.sum(CashDeposit.amount), 0)).where(
+            CashDeposit.seller_id == seller_id
+        )
+    )
+    return (
+        Decimal(sales_total)
+        + Decimal(incoming)
+        + Decimal(deposited)
+        - Decimal(outgoing)
+        - Decimal(taken)
+    )
 
 
 async def list_balances(session: AsyncSession) -> list[tuple[Seller, Decimal]]:
@@ -124,3 +140,26 @@ async def withdraw(
     session.add(record)
     await session.flush()
     return record
+
+
+async def deposit(
+    session: AsyncSession,
+    seller_id: int,
+    amount: Decimal,
+) -> CashDeposit:
+    if amount <= 0:
+        raise InsufficientFundsError
+    seller = await session.get(Seller, seller_id)
+    if seller is None:
+        raise InsufficientFundsError
+    record = CashDeposit(seller_id=seller_id, amount=amount)
+    session.add(record)
+    await session.flush()
+    return record
+
+
+async def delete_deposit(session: AsyncSession, row: CashDeposit) -> None:
+    balance = await seller_balance(session, row.seller_id)
+    if Decimal(row.amount) > balance:
+        raise InsufficientFundsError
+    await session.delete(row)

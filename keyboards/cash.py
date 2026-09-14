@@ -11,6 +11,10 @@ def cash_menu(rows: list[tuple[Seller, Decimal]]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if rows:
         builder.button(
+            text="Зачислить",
+            callback_data=ManageCB(section="cash", action="deposit").pack(),
+        )
+        builder.button(
             text="Забрать",
             callback_data=ManageCB(section="cash", action="withdraw").pack(),
         )
@@ -71,6 +75,21 @@ def report_end_keyboard() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(text="Отмена", callback_data=ManageCB(section="cash", action="cancel").pack())
+    )
+    return builder.as_markup()
+
+
+def deposit_confirm_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="Зачислить",
+            callback_data=ManageCB(section="cash", action="save_dep").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="« Назад", callback_data=ManageCB(section="cash", action="deposit").pack()),
+        InlineKeyboardButton(text="Отмена", callback_data=ManageCB(section="cash", action="cancel").pack()),
     )
     return builder.as_markup()
 

@@ -5,9 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from db.models import Batch, CashTransfer, CashWithdrawal, Product, Sale, StockWriteOff
+from db.models import Batch, CashDeposit, CashTransfer, CashWithdrawal, Product, Sale, StockWriteOff
 from repositories import catalog
 from repositories.sales import OutOfStockError, delete_sale
+from repositories.sellers import InsufficientFundsError, delete_deposit
 from repositories.writeoffs import delete_writeoff
 from utils.money import format_money
 
@@ -153,6 +154,19 @@ def _from_writeoff(row: StockWriteOff) -> JournalEntry:
     )
 
 
+def _from_deposit(row: CashDeposit) -> JournalEntry:
+    money = format_money(row.amount)
+    return JournalEntry(
+        kind="deposit",
+        item_id=row.id,
+        created_at=row.created_at,
+        button=f"Опт · {_when(row.created_at)} · {row.seller.name} · {money}",
+        title="Опт",
+        body=f"{_when(row.created_at)}\n{row.seller.name}\n{money}",
+        can_undo=True,
+    )
+
+
 def _from_withdraw(row: CashWithdrawal) -> JournalEntry:
     money = format_money(row.amount)
     return JournalEntry(
@@ -201,6 +215,12 @@ async def list_entries(session: AsyncSession) -> list[JournalEntry]:
         .order_by(CashWithdrawal.created_at.desc())
         .limit(JOURNAL_LIMIT)
     )
+    deposits = await session.execute(
+        select(CashDeposit)
+        .options(selectinload(CashDeposit.seller))
+        .order_by(CashDeposit.created_at.desc())
+        .limit(JOURNAL_LIMIT)
+    )
     writeoffs = await session.execute(
         select(StockWriteOff)
         .options(
@@ -217,6 +237,7 @@ async def list_entries(session: AsyncSession) -> list[JournalEntry]:
         + [_from_batch(row) for row in batches.scalars().all()]
         + [_from_transfer(row) for row in transfers.scalars().all()]
         + [_from_withdraw(row) for row in withdrawals.scalars().all()]
+        + [_from_deposit(row) for row in deposits.scalars().all()]
         + [_from_writeoff(row) for row in writeoffs.scalars().all()]
     )
     entries.sort(key=lambda item: item.created_at, reverse=True)
@@ -262,6 +283,13 @@ async def get_entry(session: AsyncSession, kind: str, item_id: int) -> JournalEn
             options=[selectinload(CashWithdrawal.seller)],
         )
         return _from_withdraw(row) if row else None
+    if kind == "deposit":
+        row = await session.get(
+            CashDeposit,
+            item_id,
+            options=[selectinload(CashDeposit.seller)],
+        )
+        return _from_deposit(row) if row else None
     if kind == "writeoff":
         row = await session.get(
             StockWriteOff,
@@ -317,6 +345,15 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
         if row is None:
             raise CannotUndoError("Этой записи уже нет.")
         await session.delete(row)
+        return
+    if kind == "deposit":
+        row = await session.get(CashDeposit, item_id)
+        if row is None:
+            raise CannotUndoError("Этой записи уже нет.")
+        try:
+            await delete_deposit(session, row)
+        except InsufficientFundsError as exc:
+            raise CannotUndoError("В кассе уже меньше, чем зачисляли.") from exc
         return
     if kind == "writeoff":
         row = await session.get(StockWriteOff, item_id)

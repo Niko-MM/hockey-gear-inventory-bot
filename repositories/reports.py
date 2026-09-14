@@ -6,7 +6,18 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Batch, CashTransfer, CashWithdrawal, City, Product, Sale, Seller, StickModel, StockWriteOff
+from db.models import (
+    Batch,
+    CashDeposit,
+    CashTransfer,
+    CashWithdrawal,
+    City,
+    Product,
+    Sale,
+    Seller,
+    StickModel,
+    StockWriteOff,
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +36,8 @@ class PeriodReport:
     transfers: list[tuple[str, str, Decimal]]
     withdrawals_by_seller: list[tuple[str, Decimal]]
     writeoffs_by_city: list[tuple[str, int, Decimal]]
+    wholesale_by_seller: list[tuple[str, Decimal]]
+    wholesale_total: Decimal
 
 
 def _in_period(column, start: date, end: date):
@@ -149,6 +162,17 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
         (name, int(qty), Decimal(amount)) for name, qty, amount in writeoff_rows.all()
     ]
 
+    dep_from, dep_to = _in_period(CashDeposit.created_at, start, end)
+    deposit_rows = await session.execute(
+        select(Seller.name, func.coalesce(func.sum(CashDeposit.amount), 0))
+        .join(CashDeposit, CashDeposit.seller_id == Seller.id)
+        .where(dep_from, dep_to)
+        .group_by(Seller.name)
+        .order_by(Seller.name)
+    )
+    wholesale_by_seller = [(name, Decimal(amount)) for name, amount in deposit_rows.all()]
+    wholesale_total = sum((amount for _, amount in wholesale_by_seller), Decimal("0"))
+
     return PeriodReport(
         start=start,
         end=end,
@@ -164,4 +188,6 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
         transfers=transfers,
         withdrawals_by_seller=withdrawals_by_seller,
         writeoffs_by_city=writeoffs_by_city,
+        wholesale_by_seller=wholesale_by_seller,
+        wholesale_total=wholesale_total,
     )
