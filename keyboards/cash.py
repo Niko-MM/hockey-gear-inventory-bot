@@ -61,6 +61,20 @@ def cash_nav_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def report_end_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="Сегодня",
+            callback_data=ManageCB(section="cash", action="report_today").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="Отмена", callback_data=ManageCB(section="cash", action="cancel").pack())
+    )
+    return builder.as_markup()
+
+
 def withdraw_confirm_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(

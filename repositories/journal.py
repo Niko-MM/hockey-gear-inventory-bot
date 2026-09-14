@@ -5,8 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from db.models import Batch, CashTransfer, CashWithdrawal, Product, Sale
+from db.models import Batch, CashTransfer, CashWithdrawal, Product, Sale, StockWriteOff
+from repositories import catalog
 from repositories.sales import OutOfStockError, delete_sale
+from repositories.writeoffs import delete_writeoff
 from utils.money import format_money
 
 JOURNAL_LIMIT = 20
@@ -82,8 +84,15 @@ def _from_sale(sale: Sale) -> JournalEntry:
 
 
 def _from_batch(batch: Batch) -> JournalEntry:
-    sold = batch.quantity_in != batch.remaining_quantity or bool(batch.sales)
+    has_sales = bool(batch.sales)
+    leftover_changed = batch.quantity_in != batch.remaining_quantity
     sku = _sku(batch.product)
+    if has_sales:
+        block_reason = "С этой партии уже продавали."
+    elif leftover_changed:
+        block_reason = "С этой партии уже списывали."
+    else:
+        block_reason = ""
     return JournalEntry(
         kind="income",
         item_id=batch.id,
@@ -100,8 +109,8 @@ def _from_batch(batch: Batch) -> JournalEntry:
             f"Пришло {batch.quantity_in} шт · осталось {batch.remaining_quantity}\n"
             f"Закуп: {format_money(batch.purchase_price)}"
         ),
-        can_undo=not sold,
-        block_reason="С этой партии уже продавали." if sold else "",
+        can_undo=not has_sales and not leftover_changed,
+        block_reason=block_reason,
     )
 
 
@@ -120,6 +129,25 @@ def _from_transfer(row: CashTransfer) -> JournalEntry:
             f"{_when(row.created_at)}\n"
             f"{row.from_seller.name} → {row.to_seller.name}\n"
             f"{money}"
+        ),
+        can_undo=True,
+    )
+
+
+def _from_writeoff(row: StockWriteOff) -> JournalEntry:
+    batch = row.batch
+    qty = f"{row.quantity} шт"
+    return JournalEntry(
+        kind="writeoff",
+        item_id=row.id,
+        created_at=row.created_at,
+        button=f"Списание · {_when(row.created_at)} · {batch.city.name} · {qty}",
+        title="Списание",
+        body=(
+            f"{_when(row.created_at)}\n"
+            f"{batch.city.name}\n"
+            f"{_sku(batch.product)}\n"
+            f"{qty} · закуп {format_money(batch.purchase_price)}"
         ),
         can_undo=True,
     )
@@ -173,11 +201,23 @@ async def list_entries(session: AsyncSession) -> list[JournalEntry]:
         .order_by(CashWithdrawal.created_at.desc())
         .limit(JOURNAL_LIMIT)
     )
+    writeoffs = await session.execute(
+        select(StockWriteOff)
+        .options(
+            selectinload(StockWriteOff.batch).options(
+                selectinload(Batch.city),
+                _product_load(),
+            )
+        )
+        .order_by(StockWriteOff.created_at.desc())
+        .limit(JOURNAL_LIMIT)
+    )
     entries = (
         [_from_sale(row) for row in sales.scalars().all()]
         + [_from_batch(row) for row in batches.scalars().all()]
         + [_from_transfer(row) for row in transfers.scalars().all()]
         + [_from_withdraw(row) for row in withdrawals.scalars().all()]
+        + [_from_writeoff(row) for row in writeoffs.scalars().all()]
     )
     entries.sort(key=lambda item: item.created_at, reverse=True)
     return entries[:JOURNAL_LIMIT]
@@ -222,6 +262,18 @@ async def get_entry(session: AsyncSession, kind: str, item_id: int) -> JournalEn
             options=[selectinload(CashWithdrawal.seller)],
         )
         return _from_withdraw(row) if row else None
+    if kind == "writeoff":
+        row = await session.get(
+            StockWriteOff,
+            item_id,
+            options=[
+                selectinload(StockWriteOff.batch).options(
+                    selectinload(Batch.city),
+                    _product_load(),
+                )
+            ],
+        )
+        return _from_writeoff(row) if row else None
     return None
 
 
@@ -245,9 +297,14 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
         batch = await session.get(Batch, item_id, options=[selectinload(Batch.sales)])
         if batch is None:
             raise CannotUndoError("Этой записи уже нет.")
-        if batch.sales or batch.remaining_quantity != batch.quantity_in:
+        if batch.sales:
             raise CannotUndoError("С этой партии уже продавали.")
+        if batch.remaining_quantity != batch.quantity_in:
+            raise CannotUndoError("С этой партии уже списывали.")
+        product_id = batch.product_id
         await session.delete(batch)
+        await session.flush()
+        await catalog.remove_product_if_unused(session, product_id)
         return
     if kind == "transfer":
         row = await session.get(CashTransfer, item_id)
@@ -260,5 +317,14 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
         if row is None:
             raise CannotUndoError("Этой записи уже нет.")
         await session.delete(row)
+        return
+    if kind == "writeoff":
+        row = await session.get(StockWriteOff, item_id)
+        if row is None:
+            raise CannotUndoError("Этой записи уже нет.")
+        try:
+            await delete_writeoff(session, row)
+        except OutOfStockError as exc:
+            raise CannotUndoError("Не получилось вернуть клюшки на партию.") from exc
         return
     raise CannotUndoError("Неизвестная операция.")

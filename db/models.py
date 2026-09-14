@@ -159,6 +159,7 @@ class Batch(Base):
     product: Mapped[Product] = relationship(back_populates="batches")
     city: Mapped[City] = relationship(back_populates="batches")
     sales: Mapped[list["Sale"]] = relationship(back_populates="batch")
+    write_offs: Mapped[list["StockWriteOff"]] = relationship(back_populates="batch")
 
 
 class Sale(Base):
@@ -228,3 +229,19 @@ class CashWithdrawal(Base):
     )
 
     seller: Mapped[Seller] = relationship(back_populates="withdrawals")
+
+
+class StockWriteOff(Base):
+    __tablename__ = "write_offs"
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_writeoff_quantity_positive"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    batch: Mapped[Batch] = relationship(back_populates="write_offs")
