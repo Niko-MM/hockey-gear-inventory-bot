@@ -49,6 +49,7 @@ class Seller(Base):
         foreign_keys="CashTransfer.to_seller_id",
     )
     withdrawals: Mapped[list["CashWithdrawal"]] = relationship(back_populates="seller")
+    deposits: Mapped[list["CashDeposit"]] = relationship(back_populates="seller")
 
 
 class StickModel(Base):
@@ -229,6 +230,22 @@ class CashWithdrawal(Base):
     )
 
     seller: Mapped[Seller] = relationship(back_populates="withdrawals")
+
+
+class CashDeposit(Base):
+    __tablename__ = "cash_deposits"
+    __table_args__ = (CheckConstraint("amount > 0", name="ck_deposit_amount_positive"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    seller_id: Mapped[int] = mapped_column(ForeignKey("sellers.id"), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    seller: Mapped[Seller] = relationship(back_populates="deposits")
 
 
 class StockWriteOff(Base):

@@ -415,7 +415,7 @@ async def delete_seller(
         await sellers_repo.delete_seller(session, callback_data.item_id)
     except InUseError:
         await callback.answer(
-            "Нельзя удалить: есть продажи, переводы или изъятия.",
+            "Нельзя удалить: есть продажи, переводы, изъятия или опт.",
             show_alert=True,
         )
         return

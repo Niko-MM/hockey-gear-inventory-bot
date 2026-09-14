@@ -13,6 +13,7 @@ from keyboards.callbacks import ManageCB, NavCB
 from keyboards.cash import (
     cash_menu,
     cash_nav_keyboard,
+    deposit_confirm_keyboard,
     pick_seller_keyboard,
     report_end_keyboard,
     report_keyboard,
@@ -23,7 +24,7 @@ from repositories import reports as reports_repo
 from repositories import sellers as sellers_repo
 from repositories.catalog import InUseError
 from repositories.sellers import InsufficientFundsError
-from states.sellers import ReportPeriod, TransferCash, WithdrawCash
+from states.sellers import DepositCash, ReportPeriod, TransferCash, WithdrawCash
 from utils.money import format_money, parse_money
 
 router = Router()
@@ -133,6 +134,7 @@ def _format_report(report: reports_repo.PeriodReport) -> str:
         or report.transfers
         or report.withdrawals_by_seller
         or report.writeoffs_by_city
+        or report.wholesale_by_seller
     )
     if not has_sales and not has_other:
         lines.extend(["", "За этот период ничего не было."])
@@ -156,6 +158,16 @@ def _format_report(report: reports_repo.PeriodReport) -> str:
         )
         if report.receipts:
             lines.append(f"Средний чек — {format_money(report.revenue / report.receipts)}")
+
+    if report.wholesale_by_seller:
+        lines.extend(["", "Опт"])
+        lines.extend(
+            f"{name} — {format_money(amount)}"
+            for name, amount in report.wholesale_by_seller
+        )
+        lines.append(f"Всего — {format_money(report.wholesale_total)}")
+
+    if has_sales:
         if report.sales_by_seller:
             lines.extend(["", "Кассы (пришло с продаж)"])
             lines.extend(
@@ -407,6 +419,103 @@ async def save_withdraw(callback: CallbackQuery, session: AsyncSession, state: F
     await callback.answer()
     rows = await sellers_repo.list_balances(session)
     text = f"✅ Забрал {format_money(amount)} у {seller.name}\n\n{_cash_text(rows)}"
+    message = _callback_message(callback)
+    if message:
+        try:
+            await message.delete()
+        except TelegramBadRequest:
+            await message.edit_text(text, reply_markup=cash_menu(rows))
+            return
+        await message.answer(text, reply_markup=cash_menu(rows))
+
+
+@router.callback_query(ManageCB.filter((F.section == "cash") & (F.action == "deposit")))
+async def pick_deposit(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    await state.clear()
+    sellers = await sellers_repo.list_sellers(session)
+    if not sellers:
+        await callback.answer("Сначала добавь продавцов.", show_alert=True)
+        return
+    await callback.answer()
+    message = _callback_message(callback)
+    if message:
+        await message.edit_text("Кому зачислить?", reply_markup=pick_seller_keyboard(sellers, "pick_dep"))
+
+
+@router.callback_query(ManageCB.filter((F.section == "cash") & (F.action == "pick_dep")))
+async def picked_deposit(
+    callback: CallbackQuery,
+    callback_data: ManageCB,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    seller = await sellers_repo.get_seller(session, callback_data.item_id)
+    if seller is None:
+        await callback.answer("Продавец не найден.", show_alert=True)
+        return
+    await state.update_data(deposit_seller_id=seller.id)
+    await state.set_state(DepositCash.amount)
+    await callback.answer()
+    message = _callback_message(callback)
+    if message:
+        await message.edit_text(
+            f"Сколько зачислить {seller.name}? Это опт.",
+            reply_markup=cash_nav_keyboard(),
+        )
+        await _remember_prompt(state, message)
+
+
+@router.message(DepositCash.amount, F.text, ~F.text.in_(MENU_TEXTS))
+async def confirm_deposit(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    amount = parse_money(message.text or "")
+    if amount is None:
+        await message.answer("Нужно целое число, например 40 000")
+        return
+    data = await state.get_data()
+    seller_id = data.get("deposit_seller_id")
+    if not isinstance(seller_id, int):
+        await state.clear()
+        await message.answer("Начни заново.")
+        return
+    seller = await sellers_repo.get_seller(session, seller_id)
+    if seller is None:
+        await state.clear()
+        await message.answer("Продавец не найден.")
+        return
+    await state.update_data(deposit_amount=str(amount))
+    await state.set_state(None)
+    await _delete_prompt(message.bot, state)
+    sent = await message.answer(
+        f"Зачислить {format_money(amount)} {seller.name} как опт?",
+        reply_markup=deposit_confirm_keyboard(),
+    )
+    await _remember_prompt(state, sent)
+
+
+@router.callback_query(ManageCB.filter((F.section == "cash") & (F.action == "save_dep")))
+async def save_deposit(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    data = await state.get_data()
+    seller_id = data.get("deposit_seller_id")
+    raw_amount = data.get("deposit_amount")
+    if not isinstance(seller_id, int) or not isinstance(raw_amount, str):
+        await callback.answer("Начни заново.", show_alert=True)
+        await state.clear()
+        return
+    seller = await sellers_repo.get_seller(session, seller_id)
+    if seller is None:
+        await callback.answer("Продавец не найден.", show_alert=True)
+        await state.clear()
+        return
+    amount = Decimal(raw_amount)
+    try:
+        await sellers_repo.deposit(session, seller_id, amount)
+    except InsufficientFundsError:
+        await callback.answer("Не получилось зачислить.", show_alert=True)
+        return
+    await state.clear()
+    await callback.answer()
+    rows = await sellers_repo.list_balances(session)
+    text = f"✅ Зачислил (опт) {format_money(amount)} · {seller.name}\n\n{_cash_text(rows)}"
     message = _callback_message(callback)
     if message:
         try:
