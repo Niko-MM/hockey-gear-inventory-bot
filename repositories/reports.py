@@ -18,6 +18,7 @@ from db.models import (
     StickModel,
     StockWriteOff,
 )
+from utils.dates import period_utc_bounds
 
 
 @dataclass(frozen=True)
@@ -41,8 +42,8 @@ class PeriodReport:
 
 
 def _in_period(column, start: date, end: date):
-    day = func.date(column)
-    return day >= start.isoformat(), day <= end.isoformat()
+    begin, finish = period_utc_bounds(start, end)
+    return column >= begin, column < finish
 
 
 async def period_report(session: AsyncSession, start: date, end: date) -> PeriodReport:

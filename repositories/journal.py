@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,7 @@ from repositories import catalog
 from repositories.sales import OutOfStockError, delete_sale
 from repositories.sellers import InsufficientFundsError, delete_deposit
 from repositories.writeoffs import delete_writeoff
+from utils.dates import as_local, period_utc_bounds
 from utils.money import format_money
 
 JOURNAL_LIMIT = 20
@@ -34,7 +35,7 @@ class JournalEntry:
 
 
 def _when(moment: datetime) -> str:
-    return moment.strftime("%d.%m %H:%M")
+    return as_local(moment).strftime("%d.%m %H:%M")
 
 
 def _color_title(color) -> str:
@@ -180,17 +181,65 @@ def _from_withdraw(row: CashWithdrawal) -> JournalEntry:
     )
 
 
+def _period_filter(column, start, end):
+    begin, finish = period_utc_bounds(start, end)
+    return column >= begin, column < finish
+
+
 async def list_entries(session: AsyncSession) -> list[JournalEntry]:
-    sales = await session.execute(
+    entries = await _collect_entries(session, limit=JOURNAL_LIMIT)
+    entries.sort(key=lambda item: item.created_at, reverse=True)
+    return entries[:JOURNAL_LIMIT]
+
+
+async def list_period(
+    session: AsyncSession,
+    start: date,
+    end: date,
+    *,
+    page: int = 0,
+) -> tuple[list[JournalEntry], int]:
+    entries = await _collect_entries(
+        session,
+        sale_filters=_period_filter(Sale.created_at, start, end),
+        batch_filters=_period_filter(Batch.created_at, start, end),
+        transfer_filters=_period_filter(CashTransfer.created_at, start, end),
+        withdraw_filters=_period_filter(CashWithdrawal.created_at, start, end),
+        deposit_filters=_period_filter(CashDeposit.created_at, start, end),
+        writeoff_filters=_period_filter(StockWriteOff.created_at, start, end),
+    )
+    entries.sort(key=lambda item: item.created_at, reverse=True)
+    total = len(entries)
+    if total == 0:
+        return [], 0
+    pages = (total + JOURNAL_LIMIT - 1) // JOURNAL_LIMIT
+    page = min(max(page, 0), pages - 1)
+    offset = page * JOURNAL_LIMIT
+    return entries[offset : offset + JOURNAL_LIMIT], total
+
+
+async def _collect_entries(
+    session: AsyncSession,
+    *,
+    sale_filters=(),
+    batch_filters=(),
+    transfer_filters=(),
+    withdraw_filters=(),
+    deposit_filters=(),
+    writeoff_filters=(),
+    limit: int | None = None,
+) -> list[JournalEntry]:
+    sales_stmt = (
         select(Sale)
         .options(
             selectinload(Sale.seller),
             selectinload(Sale.batch).options(selectinload(Batch.city), _product_load()),
         )
         .order_by(Sale.created_at.desc())
-        .limit(JOURNAL_LIMIT)
     )
-    batches = await session.execute(
+    if sale_filters:
+        sales_stmt = sales_stmt.where(*sale_filters)
+    batches_stmt = (
         select(Batch)
         .options(
             selectinload(Batch.city),
@@ -198,30 +247,34 @@ async def list_entries(session: AsyncSession) -> list[JournalEntry]:
             _product_load(),
         )
         .order_by(Batch.created_at.desc())
-        .limit(JOURNAL_LIMIT)
     )
-    transfers = await session.execute(
+    if batch_filters:
+        batches_stmt = batches_stmt.where(*batch_filters)
+    transfers_stmt = (
         select(CashTransfer)
         .options(
             selectinload(CashTransfer.from_seller),
             selectinload(CashTransfer.to_seller),
         )
         .order_by(CashTransfer.created_at.desc())
-        .limit(JOURNAL_LIMIT)
     )
-    withdrawals = await session.execute(
+    if transfer_filters:
+        transfers_stmt = transfers_stmt.where(*transfer_filters)
+    withdrawals_stmt = (
         select(CashWithdrawal)
         .options(selectinload(CashWithdrawal.seller))
         .order_by(CashWithdrawal.created_at.desc())
-        .limit(JOURNAL_LIMIT)
     )
-    deposits = await session.execute(
+    if withdraw_filters:
+        withdrawals_stmt = withdrawals_stmt.where(*withdraw_filters)
+    deposits_stmt = (
         select(CashDeposit)
         .options(selectinload(CashDeposit.seller))
         .order_by(CashDeposit.created_at.desc())
-        .limit(JOURNAL_LIMIT)
     )
-    writeoffs = await session.execute(
+    if deposit_filters:
+        deposits_stmt = deposits_stmt.where(*deposit_filters)
+    writeoffs_stmt = (
         select(StockWriteOff)
         .options(
             selectinload(StockWriteOff.batch).options(
@@ -230,9 +283,24 @@ async def list_entries(session: AsyncSession) -> list[JournalEntry]:
             )
         )
         .order_by(StockWriteOff.created_at.desc())
-        .limit(JOURNAL_LIMIT)
     )
-    entries = (
+    if writeoff_filters:
+        writeoffs_stmt = writeoffs_stmt.where(*writeoff_filters)
+    if limit is not None:
+        sales_stmt = sales_stmt.limit(limit)
+        batches_stmt = batches_stmt.limit(limit)
+        transfers_stmt = transfers_stmt.limit(limit)
+        withdrawals_stmt = withdrawals_stmt.limit(limit)
+        deposits_stmt = deposits_stmt.limit(limit)
+        writeoffs_stmt = writeoffs_stmt.limit(limit)
+
+    sales = await session.execute(sales_stmt)
+    batches = await session.execute(batches_stmt)
+    transfers = await session.execute(transfers_stmt)
+    withdrawals = await session.execute(withdrawals_stmt)
+    deposits = await session.execute(deposits_stmt)
+    writeoffs = await session.execute(writeoffs_stmt)
+    return (
         [_from_sale(row) for row in sales.scalars().all()]
         + [_from_batch(row) for row in batches.scalars().all()]
         + [_from_transfer(row) for row in transfers.scalars().all()]
@@ -240,8 +308,6 @@ async def list_entries(session: AsyncSession) -> list[JournalEntry]:
         + [_from_deposit(row) for row in deposits.scalars().all()]
         + [_from_writeoff(row) for row in writeoffs.scalars().all()]
     )
-    entries.sort(key=lambda item: item.created_at, reverse=True)
-    return entries[:JOURNAL_LIMIT]
 
 
 async def get_entry(session: AsyncSession, kind: str, item_id: int) -> JournalEntry | None:
