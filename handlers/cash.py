@@ -1,7 +1,6 @@
 # pyright: reportUnusedCallResult=false
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from decimal import Decimal
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -25,30 +24,12 @@ from repositories import sellers as sellers_repo
 from repositories.catalog import InUseError
 from repositories.sellers import InsufficientFundsError
 from states.sellers import DepositCash, ReportPeriod, TransferCash, WithdrawCash
+from utils.dates import format_input_date, format_range, parse_date, today
 from utils.money import format_money, parse_money
 
 router = Router()
 
-try:
-    BUSINESS_TZ = ZoneInfo("Europe/Samara")
-except ZoneInfoNotFoundError:
-    BUSINESS_TZ = timezone(timedelta(hours=4))
-
 MENU_TEXTS = {BTN_SALE, BTN_INCOME, BTN_STOCK, BTN_SERVICE}
-MONTHS = (
-    "января",
-    "февраля",
-    "марта",
-    "апреля",
-    "мая",
-    "июня",
-    "июля",
-    "августа",
-    "сентября",
-    "октября",
-    "ноября",
-    "декабря",
-)
 
 
 def _callback_message(callback: CallbackQuery) -> Message | None:
@@ -75,35 +56,6 @@ async def _delete_prompt(bot: Bot, state: FSMContext) -> None:
         pass
 
 
-def _today() -> date:
-    return datetime.now(BUSINESS_TZ).date()
-
-
-def _format_input_date(value: date) -> str:
-    return f"{value.day:02d}.{value.month:02d}.{value.year % 100:02d}"
-
-
-def _parse_date(text: str) -> date | None:
-    parts = text.strip().split(".")
-    if len(parts) != 3:
-        return None
-    day_raw, month_raw, year_raw = parts
-    if len(year_raw) not in (2, 4):
-        return None
-    try:
-        day = int(day_raw)
-        month = int(month_raw)
-        year = int(year_raw)
-    except ValueError:
-        return None
-    if year < 100:
-        year += 2000
-    try:
-        return date(year, month, day)
-    except ValueError:
-        return None
-
-
 def _cheques(n: int) -> str:
     n100 = abs(n) % 100
     n10 = n100 % 10
@@ -118,16 +70,8 @@ def _cheques(n: int) -> str:
     return f"{n} {word}"
 
 
-def _format_range(start: date, end: date) -> str:
-    if start == end:
-        return f"{start.day} {MONTHS[start.month - 1]} {start.year}"
-    if start.month == end.month and start.year == end.year:
-        return f"{start.day}–{end.day} {MONTHS[start.month - 1]} {start.year}"
-    return f"{start.day:02d}.{start.month:02d}.{start.year} — {end.day:02d}.{end.month:02d}.{end.year}"
-
-
 def _format_report(report: reports_repo.PeriodReport) -> str:
-    lines = [_format_range(report.start, report.end)]
+    lines = [format_range(report.start, report.end)]
     has_sales = report.total_qty > 0 or report.receipts > 0
     has_other = bool(
         report.incoming_by_city
@@ -527,11 +471,11 @@ async def save_deposit(callback: CallbackQuery, session: AsyncSession, state: FS
 
 
 def _report_start_prompt() -> str:
-    return f"С какого числа? Сегодня {_format_input_date(_today())}"
+    return f"С какого числа? Сегодня {format_input_date(today())}"
 
 
 def _report_end_prompt() -> str:
-    return f"По какое число? Сегодня {_format_input_date(_today())}"
+    return f"По какое число? Сегодня {format_input_date(today())}"
 
 
 async def _finish_report(
@@ -572,9 +516,9 @@ async def start_report(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(ReportPeriod.start, F.text, ~F.text.in_(MENU_TEXTS))
 async def save_report_start(message: Message, state: FSMContext) -> None:
-    start = _parse_date(message.text or "")
+    start = parse_date(message.text or "")
     if start is None:
-        await message.answer(f"Напиши дату так: {_format_input_date(_today())}")
+        await message.answer(f"Напиши дату так: {format_input_date(today())}")
         return
     await state.update_data(report_start=start.isoformat())
     await state.set_state(ReportPeriod.end)
@@ -585,9 +529,9 @@ async def save_report_start(message: Message, state: FSMContext) -> None:
 
 @router.message(ReportPeriod.end, F.text, ~F.text.in_(MENU_TEXTS))
 async def save_report_end(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    end = _parse_date(message.text or "")
+    end = parse_date(message.text or "")
     if end is None:
-        await message.answer(f"Напиши дату так: {_format_input_date(_today())}")
+        await message.answer(f"Напиши дату так: {format_input_date(today())}")
         return
     data = await state.get_data()
     raw_start = data.get("report_start")
@@ -614,7 +558,7 @@ async def report_today(callback: CallbackQuery, state: FSMContext, session: Asyn
         await state.clear()
         return
     start = date.fromisoformat(raw_start)
-    end = _today()
+    end = today()
     if start > end:
         await callback.answer("Начало позже сегодня. Напиши дату конца.", show_alert=True)
         return
