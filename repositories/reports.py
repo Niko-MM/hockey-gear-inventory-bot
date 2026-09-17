@@ -39,6 +39,7 @@ class PeriodReport:
     writeoffs_by_city: list[tuple[str, int, Decimal]]
     wholesale_by_seller: list[tuple[str, Decimal]]
     wholesale_total: Decimal
+    money_by_city: list[tuple[str, Decimal, Decimal, Decimal]]
 
 
 def _in_period(column, start: date, end: date):
@@ -49,14 +50,24 @@ def _in_period(column, start: date, end: date):
 async def period_report(session: AsyncSession, start: date, end: date) -> PeriodReport:
     from_day, to_day = _in_period(Sale.created_at, start, end)
     city_rows = await session.execute(
-        select(City.name, func.coalesce(func.sum(Sale.quantity), 0))
+        select(
+            City.name,
+            func.coalesce(func.sum(Sale.quantity), 0),
+            func.coalesce(func.sum(Sale.total_amount), 0),
+            func.coalesce(func.sum(Batch.purchase_price * Sale.quantity), 0),
+        )
         .join(Batch, Sale.batch_id == Batch.id)
         .join(City, Batch.city_id == City.id)
         .where(from_day, to_day)
         .group_by(City.name)
         .order_by(City.name)
     )
-    cities = [(name, int(qty)) for name, qty in city_rows.all()]
+    city_stats = city_rows.all()
+    cities = [(name, int(qty)) for name, qty, _, _ in city_stats]
+    money_by_city = [
+        (name, Decimal(revenue), Decimal(cost), Decimal(revenue) - Decimal(cost))
+        for name, _, revenue, cost in city_stats
+    ]
     total_qty = sum(qty for _, qty in cities)
 
     qty_by_model = func.coalesce(func.sum(Sale.quantity), 0)
@@ -75,17 +86,8 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
     receipts = int(
         await session.scalar(select(func.count()).select_from(Sale).where(from_day, to_day)) or 0
     )
-    revenue = await session.scalar(
-        select(func.coalesce(func.sum(Sale.total_amount), 0)).where(from_day, to_day)
-    )
-    cost = await session.scalar(
-        select(func.coalesce(func.sum(Batch.purchase_price * Sale.quantity), 0))
-        .select_from(Sale)
-        .join(Batch, Sale.batch_id == Batch.id)
-        .where(from_day, to_day)
-    )
-    revenue_dec = Decimal(revenue)
-    cost_dec = Decimal(cost)
+    revenue_dec = sum((revenue for _, revenue, _, _ in money_by_city), Decimal("0"))
+    cost_dec = sum((cost for _, _, cost, _ in money_by_city), Decimal("0"))
     profit = revenue_dec - cost_dec
 
     seller_rows = await session.execute(
@@ -191,4 +193,5 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
         writeoffs_by_city=writeoffs_by_city,
         wholesale_by_seller=wholesale_by_seller,
         wholesale_total=wholesale_total,
+        money_by_city=money_by_city,
     )
