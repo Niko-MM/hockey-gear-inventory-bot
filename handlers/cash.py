@@ -102,15 +102,15 @@ def _format_report(report: reports_repo.PeriodReport) -> str:
         )
         if report.receipts:
             lines.append(f"Средний чек — {format_money(report.revenue / report.receipts)}")
-        if len(report.money_by_city) > 1:
-            for name, revenue, cost, profit in report.money_by_city:
+        if len(report.sales_by_city) > 1:
+            for city in report.sales_by_city:
+                lines.extend(["", city.name])
+                lines.extend(f"{model} — {qty} шт" for model, qty in city.models)
                 lines.extend(
                     [
-                        "",
-                        name,
-                        f"Выручка — {format_money(revenue)}",
-                        f"Закуп — {format_money(cost)}",
-                        f"Прибыль — {format_money(profit)}",
+                        f"Выручка — {format_money(city.revenue)}",
+                        f"Закуп — {format_money(city.cost)}",
+                        f"Прибыль — {format_money(city.profit)}",
                     ]
                 )
 
