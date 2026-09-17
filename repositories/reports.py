@@ -1,3 +1,4 @@
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -22,6 +23,15 @@ from utils.dates import period_utc_bounds
 
 
 @dataclass(frozen=True)
+class CitySales:
+    name: str
+    revenue: Decimal
+    cost: Decimal
+    profit: Decimal
+    models: list[tuple[str, int]]
+
+
+@dataclass(frozen=True)
 class PeriodReport:
     start: date
     end: date
@@ -39,7 +49,7 @@ class PeriodReport:
     writeoffs_by_city: list[tuple[str, int, Decimal]]
     wholesale_by_seller: list[tuple[str, Decimal]]
     wholesale_total: Decimal
-    money_by_city: list[tuple[str, Decimal, Decimal, Decimal]]
+    sales_by_city: list[CitySales]
 
 
 def _in_period(column, start: date, end: date):
@@ -64,10 +74,6 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
     )
     city_stats = city_rows.all()
     cities = [(name, int(qty)) for name, qty, _, _ in city_stats]
-    money_by_city = [
-        (name, Decimal(revenue), Decimal(cost), Decimal(revenue) - Decimal(cost))
-        for name, _, revenue, cost in city_stats
-    ]
     total_qty = sum(qty for _, qty in cities)
 
     qty_by_model = func.coalesce(func.sum(Sale.quantity), 0)
@@ -83,11 +89,36 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
     )
     sales_by_model = [(name, int(qty)) for name, qty in model_rows.all()]
 
+    model_city_rows = await session.execute(
+        select(City.name, StickModel.name, qty_by_model)
+        .select_from(Sale)
+        .join(Batch, Sale.batch_id == Batch.id)
+        .join(City, Batch.city_id == City.id)
+        .join(Product, Batch.product_id == Product.id)
+        .join(StickModel, Product.model_id == StickModel.id)
+        .where(from_day, to_day)
+        .group_by(City.name, StickModel.name)
+        .order_by(City.name, qty_by_model.desc(), StickModel.name)
+    )
+    models_by_city: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for city_name, model_name, qty in model_city_rows.all():
+        models_by_city[city_name].append((model_name, int(qty)))
+    sales_by_city = [
+        CitySales(
+            name=name,
+            revenue=Decimal(revenue),
+            cost=Decimal(cost),
+            profit=Decimal(revenue) - Decimal(cost),
+            models=models_by_city.get(name, []),
+        )
+        for name, _, revenue, cost in city_stats
+    ]
+
     receipts = int(
         await session.scalar(select(func.count()).select_from(Sale).where(from_day, to_day)) or 0
     )
-    revenue_dec = sum((revenue for _, revenue, _, _ in money_by_city), Decimal("0"))
-    cost_dec = sum((cost for _, _, cost, _ in money_by_city), Decimal("0"))
+    revenue_dec = sum((row.revenue for row in sales_by_city), Decimal("0"))
+    cost_dec = sum((row.cost for row in sales_by_city), Decimal("0"))
     profit = revenue_dec - cost_dec
 
     seller_rows = await session.execute(
@@ -193,5 +224,5 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
         writeoffs_by_city=writeoffs_by_city,
         wholesale_by_seller=wholesale_by_seller,
         wholesale_total=wholesale_total,
-        money_by_city=money_by_city,
+        sales_by_city=sales_by_city,
     )
