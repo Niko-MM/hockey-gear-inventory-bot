@@ -57,22 +57,19 @@ def _one_by_name(items: list, attr: str, raw: str, *, flex: bool = False) -> tup
     return None, f"в справочнике несколько «{raw.strip()}»"
 
 
-def _match_color(colors: list[ColorOption], letter: str | None) -> tuple[ColorOption | None, str | None]:
-    if letter is None:
+def _match_color(colors: list[ColorOption], raw: str | None) -> tuple[ColorOption | None, str | None]:
+    if raw is None:
         classic = next((item for item in colors if item.is_default), None)
         if classic is None:
             return None, "нет классики у модели"
         return classic, None
-    matches = [
-        item
-        for item in colors
-        if not item.is_default and item.name[:1].casefold() == letter
-    ]
+    needle = normalize_name(raw)
+    matches = [item for item in colors if normalize_name(item.name) == needle]
     if len(matches) == 1:
         return matches[0], None
     if not matches:
-        return None, f"нет цвета «{letter}»"
-    return None, f"цвет «{letter}» неоднозначен"
+        return None, f"нет цвета «{raw.strip()}»"
+    return None, f"цвет «{raw.strip()}» неоднозначен"
 
 
 def _label(
@@ -179,8 +176,8 @@ async def parse_income_csv(session: AsyncSession, text: str) -> SheetPreview:
         colors = colors_by_model[model.id]
         row_batches: list[SheetBatch] = []
         color_failed = False
-        for split_qty, letter in splits:
-            color, color_error = _match_color(colors, letter)
+        for split_qty, color_name in splits:
+            color, color_error = _match_color(colors, color_name)
             if color_error or color is None:
                 errors.append(f"{prefix}: {color_error or 'нет цвета'}")
                 color_failed = True
