@@ -18,7 +18,7 @@ OPTIONAL_HEADERS = {
     "цвет": "color",
 }
 SKIP_HEADERS = {"фирма", "бренд", "brand"}
-COLOR_TOKEN = re.compile(r"^(\d+)?([a-zа-яё])$", re.IGNORECASE)
+COLOR_QTY_RE = re.compile(r"^(\d+)\s*(.+)$")
 SHEET_ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9-_]+)")
 
 
@@ -75,24 +75,27 @@ def parse_color_cell(raw: str, total: int) -> tuple[list[tuple[int, str | None]]
     text = raw.strip()
     if not text:
         return [(total, None)], None
-    parts = [part for part in re.split(r"[,;\s]+", text) if part]
+    parts = [part.strip() for part in re.split(r"[,;]+", text) if part.strip()]
     parsed: list[tuple[int | None, str]] = []
     for part in parts:
-        match = COLOR_TOKEN.fullmatch(part)
-        if match is None:
-            return [], f"непонятный цвет «{part}»"
-        qty_raw, letter = match.group(1), match.group(2).casefold()
-        qty = int(qty_raw) if qty_raw else None
-        if qty is not None and qty <= 0:
-            return [], "количество цвета должно быть больше нуля"
-        parsed.append((qty, letter))
-    letters = [letter for _, letter in parsed]
-    if len(letters) != len(set(letters)):
+        match = COLOR_QTY_RE.fullmatch(part)
+        if match:
+            qty = int(match.group(1))
+            name = match.group(2).strip()
+            if not name:
+                return [], f"непонятный цвет «{part}»"
+            if qty <= 0:
+                return [], "количество цвета должно быть больше нуля"
+            parsed.append((qty, name))
+        else:
+            parsed.append((None, part))
+    names = [normalize_name(name) for _, name in parsed]
+    if len(names) != len(set(names)):
         return [], "цвет указан дважды"
-    numbered = [(qty, letter) for qty, letter in parsed if qty is not None]
-    bare = [letter for qty, letter in parsed if qty is None]
+    numbered = [(qty, name) for qty, name in parsed if qty is not None]
+    bare = [name for qty, name in parsed if qty is None]
     if numbered and bare:
-        return [], "в цвете смешаны «б» и «6б»"
+        return [], "в цвете смешаны «белый» и «4 белый»"
     if len(bare) > 1:
         return [], "несколько цветов без количества"
     if len(bare) == 1:
@@ -100,7 +103,7 @@ def parse_color_cell(raw: str, total: int) -> tuple[list[tuple[int, str | None]]
     assigned = sum(qty for qty, _ in numbered)
     if assigned > total:
         return [], f"в цвете {assigned} шт, в строке {total}"
-    result: list[tuple[int, str | None]] = [(qty, letter) for qty, letter in numbered]
+    result: list[tuple[int, str | None]] = [(qty, name) for qty, name in numbered]
     rest = total - assigned
     if rest:
         result.append((rest, None))
