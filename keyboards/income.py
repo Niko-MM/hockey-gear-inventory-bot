@@ -29,6 +29,7 @@ def choice_keyboard(
     step: str,
     *,
     show_back: bool,
+    extras: Sequence[InlineKeyboardButton] = (),
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for item_id, title in items:
@@ -38,6 +39,8 @@ def choice_keyboard(
                 callback_data=IncomeCB(action="pick", step=step, item_id=item_id).pack(),
             )
         )
+    for extra in extras:
+        builder.row(extra)
     builder.row(*_nav_row(step, show_back=show_back))
     return builder.as_markup()
 
@@ -57,4 +60,34 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
         )
     )
     builder.row(*_nav_row("confirm", show_back=True))
+    return builder.as_markup()
+
+
+def sheet_preview_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="Записать",
+            callback_data=IncomeCB(action="sheet_save", step="sheet").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="Из таблицы",
+            callback_data=IncomeCB(action="sheet", step="sheet").pack(),
+        )
+    )
+    builder.row(*_nav_row("sheet", show_back=True))
+    return builder.as_markup()
+
+
+def sheet_error_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="Из таблицы",
+            callback_data=IncomeCB(action="sheet", step="sheet").pack(),
+        )
+    )
+    builder.row(*_nav_row("sheet", show_back=True))
     return builder.as_markup()

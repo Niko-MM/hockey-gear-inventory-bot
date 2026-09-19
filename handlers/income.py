@@ -4,15 +4,23 @@ from decimal import Decimal
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from db.models import City, ColorOption, CurveOption, FlexOption, GripOption, StickModel
 from keyboards.callbacks import IncomeCB
-from keyboards.income import choice_keyboard, confirm_keyboard, nav_keyboard
+from keyboards.income import (
+    choice_keyboard,
+    confirm_keyboard,
+    nav_keyboard,
+    sheet_error_keyboard,
+    sheet_preview_keyboard,
+)
 from keyboards.menu import BTN_INCOME, BTN_SALE, BTN_SERVICE, BTN_STOCK
 from repositories import batches as batches_repo
 from repositories import catalog
+from repositories import sheet_income as sheet_repo
 from states.income import Income
 from utils.money import format_money, parse_money
 
@@ -38,6 +46,7 @@ BACK_STEP = {
     "qty": "grip",
     "price": "qty",
     "confirm": "price",
+    "sheet": "model",
 }
 
 ID_KEY = {
@@ -50,8 +59,8 @@ ID_KEY = {
 }
 
 CLEAR_AFTER = {
-    "city": ("model_id", "color_id", "flex_id", "curve_id", "grip_id", "quantity", "purchase_price"),
-    "model": ("color_id", "flex_id", "curve_id", "grip_id", "quantity", "purchase_price"),
+    "city": ("model_id", "color_id", "flex_id", "curve_id", "grip_id", "quantity", "purchase_price", "sheet_batches"),
+    "model": ("color_id", "flex_id", "curve_id", "grip_id", "quantity", "purchase_price", "sheet_batches"),
     "color": ("flex_id", "curve_id", "grip_id", "quantity", "purchase_price"),
     "flex": ("curve_id", "grip_id", "quantity", "purchase_price"),
     "curve": ("grip_id", "quantity", "purchase_price"),
@@ -180,11 +189,66 @@ def _keyboard(step: str, items: list[tuple[int, str]]) -> InlineKeyboardMarkup:
         return nav_keyboard(step, show_back=True)
     if step == "confirm":
         return confirm_keyboard()
-    return choice_keyboard(items, step, show_back=show_back)
+    extras: list[InlineKeyboardButton] = []
+    if step == "model" and settings.income_sheet_url.strip():
+        extras.append(
+            InlineKeyboardButton(
+                text="Из таблицы",
+                callback_data=IncomeCB(action="sheet", step="model").pack(),
+            )
+        )
+    return choice_keyboard(items, step, show_back=show_back, extras=extras)
 
 
 def _receipt(progress: str) -> str:
     return progress.removeprefix("Поступление").strip()
+
+
+TELEGRAM_TEXT_LIMIT = 3500
+
+
+def _chunks(text: str) -> list[str]:
+    if len(text) <= TELEGRAM_TEXT_LIMIT:
+        return [text]
+    parts: list[str] = []
+    buf: list[str] = []
+    size = 0
+    for line in text.split("\n"):
+        extra = len(line) + (1 if buf else 0)
+        if buf and size + extra > TELEGRAM_TEXT_LIMIT:
+            parts.append("\n".join(buf))
+            buf = [line]
+            size = len(line)
+        else:
+            buf.append(line)
+            size += extra
+    if buf:
+        parts.append("\n".join(buf))
+    return parts
+
+
+async def _edit_long(
+    callback: CallbackQuery,
+    text: str,
+    markup: InlineKeyboardMarkup | None,
+    state: FSMContext,
+) -> None:
+    message = _callback_message(callback)
+    if not message:
+        return
+    chunks = _chunks(text)
+    first_markup = markup if len(chunks) == 1 else None
+    try:
+        await message.edit_text(chunks[0], reply_markup=first_markup)
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc):
+            raise
+    await _remember_prompt(state, message)
+    for index, chunk in enumerate(chunks[1:], start=2):
+        last = index == len(chunks)
+        sent = await message.answer(chunk, reply_markup=markup if last else None)
+        if last:
+            await _remember_prompt(state, sent)
 
 
 async def _remember_prompt(state: FSMContext, message: Message) -> None:
@@ -384,6 +448,138 @@ async def save_batch(
     if message:
         final = (
             f"✅ Принял\n\n{_receipt(summary)}"
+        )
+        try:
+            await message.delete()
+        except TelegramBadRequest:
+            await message.edit_text(final, reply_markup=None)
+            return
+        await message.answer(final)
+
+
+def _sheet_dump(batches: list[sheet_repo.SheetBatch]) -> list[dict]:
+    return [
+        {
+            "model_id": item.model_id,
+            "color_id": item.color_id,
+            "flex_id": item.flex_id,
+            "curve_id": item.curve_id,
+            "grip_id": item.grip_id,
+            "quantity": item.quantity,
+            "purchase_price": str(item.purchase_price),
+            "label": item.label,
+        }
+        for item in batches
+    ]
+
+
+@router.callback_query(IncomeCB.filter(F.action == "sheet"))
+async def parse_sheet(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    url = settings.income_sheet_url.strip()
+    if not url:
+        await callback.answer("Ссылка на таблицу не задана.", show_alert=True)
+        return
+    data = await state.get_data()
+    city_id = data.get("city_id")
+    if not isinstance(city_id, int):
+        await callback.answer("Сначала выбери город.", show_alert=True)
+        return
+    city = await session.get(City, city_id)
+    if city is None:
+        await callback.answer("Город не найден.", show_alert=True)
+        return
+    await callback.answer("Читаю таблицу…")
+    preview = await sheet_repo.parse_income_sheet(session, url)
+    if preview.errors:
+        await state.update_data(sheet_batches=None)
+        body = "\n".join(preview.errors)
+        text = f"Поступление\nГород: {city.name}\n\nВ таблице ошибки, ничего не записал.\n\n{body}"
+        await _edit_long(callback, text, sheet_error_keyboard(), state)
+        return
+    await state.update_data(sheet_batches=_sheet_dump(preview.batches))
+    total_qty = sum(item.quantity for item in preview.batches)
+    total_cost = sum((item.purchase_price * item.quantity for item in preview.batches), Decimal("0"))
+    header = (
+        f"Поступление\nГород: {city.name}\n\n"
+        f"{len(preview.batches)} партий · {total_qty} шт · закуп {format_money(total_cost)}"
+    )
+    listing = "\n".join(item.label for item in preview.batches)
+    text = f"{header}\n\n{listing}\n\nЗаписать?"
+    await _edit_long(callback, text, sheet_preview_keyboard(), state)
+
+
+@router.callback_query(IncomeCB.filter(F.action == "sheet_save"))
+async def save_sheet(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    data = await state.get_data()
+    city_id = data.get("city_id")
+    raw_batches = data.get("sheet_batches")
+    if not isinstance(city_id, int) or not isinstance(raw_batches, list) or not raw_batches:
+        await callback.answer("Сначала прочитай таблицу.", show_alert=True)
+        return
+    city = await session.get(City, city_id)
+    created = 0
+    total_qty = 0
+    total_cost = Decimal("0")
+    for raw in raw_batches:
+        if not isinstance(raw, dict):
+            await callback.answer("Сессия сбилась. Начни поступление заново.", show_alert=True)
+            await state.clear()
+            return
+        model_id = raw.get("model_id")
+        color_id = raw.get("color_id")
+        flex_id = raw.get("flex_id")
+        curve_id = raw.get("curve_id")
+        grip_id = raw.get("grip_id")
+        quantity = raw.get("quantity")
+        raw_price = raw.get("purchase_price")
+        if (
+            not isinstance(model_id, int)
+            or not isinstance(color_id, int)
+            or not isinstance(flex_id, int)
+            or not isinstance(curve_id, int)
+            or not isinstance(grip_id, int)
+            or not isinstance(quantity, int)
+            or not isinstance(raw_price, str)
+        ):
+            await callback.answer("Сессия сбилась. Начни поступление заново.", show_alert=True)
+            await state.clear()
+            return
+        price = Decimal(raw_price)
+        product = await catalog.get_or_create_product(
+            session,
+            model_id=model_id,
+            color_id=color_id,
+            flex_id=flex_id,
+            curve_id=curve_id,
+            grip_id=grip_id,
+        )
+        await batches_repo.create_batch(
+            session,
+            product_id=product.id,
+            city_id=city_id,
+            quantity=quantity,
+            purchase_price=price,
+        )
+        created += 1
+        total_qty += quantity
+        total_cost += price * quantity
+    city_name = city.name if city else "—"
+    await state.clear()
+    await callback.answer()
+    message = _callback_message(callback)
+    if message:
+        final = (
+            f"✅ Принял из таблицы\n\n"
+            f"Город: {city_name}\n"
+            f"{created} партий · {total_qty} шт · закуп {format_money(total_cost)}"
         )
         try:
             await message.delete()
