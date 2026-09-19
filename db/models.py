@@ -133,6 +133,21 @@ class Product(Base):
     batches: Mapped[list["Batch"]] = relationship(back_populates="product")
 
 
+class IncomeImport(Base):
+    __tablename__ = "income_imports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    city_id: Mapped[int] = mapped_column(ForeignKey("cities.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    city: Mapped[City] = relationship()
+    batches: Mapped[list["Batch"]] = relationship(back_populates="income_import")
+
+
 class Batch(Base):
     __tablename__ = "batches"
     __table_args__ = (
@@ -151,6 +166,10 @@ class Batch(Base):
     purchase_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     quantity_in: Mapped[int] = mapped_column(Integer, nullable=False)
     remaining_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    import_id: Mapped[int | None] = mapped_column(
+        ForeignKey("income_imports.id"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -159,6 +178,7 @@ class Batch(Base):
 
     product: Mapped[Product] = relationship(back_populates="batches")
     city: Mapped[City] = relationship(back_populates="batches")
+    income_import: Mapped[IncomeImport | None] = relationship(back_populates="batches")
     sales: Mapped[list["Sale"]] = relationship(back_populates="batch")
     write_offs: Mapped[list["StockWriteOff"]] = relationship(back_populates="batch")
 

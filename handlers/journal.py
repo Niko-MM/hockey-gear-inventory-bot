@@ -24,11 +24,44 @@ from utils.dates import format_input_date, format_range, parse_date, today
 router = Router()
 
 MENU_TEXTS = {BTN_SALE, BTN_INCOME, BTN_STOCK, BTN_SERVICE}
+TELEGRAM_TEXT_LIMIT = 3500
 
 
 def _callback_message(callback: CallbackQuery) -> Message | None:
     message = callback.message
     return message if isinstance(message, Message) else None
+
+
+def _chunks(text: str) -> list[str]:
+    if len(text) <= TELEGRAM_TEXT_LIMIT:
+        return [text]
+    parts: list[str] = []
+    buf: list[str] = []
+    size = 0
+    for line in text.split("\n"):
+        extra = len(line) + (1 if buf else 0)
+        if buf and size + extra > TELEGRAM_TEXT_LIMIT:
+            parts.append("\n".join(buf))
+            buf = [line]
+            size = len(line)
+        else:
+            buf.append(line)
+            size += extra
+    if buf:
+        parts.append("\n".join(buf))
+    return parts
+
+
+async def _edit_entry(callback: CallbackQuery, text: str, markup) -> None:
+    message = _callback_message(callback)
+    if not message:
+        return
+    chunks = _chunks(text)
+    first_markup = markup if len(chunks) == 1 else None
+    await message.edit_text(chunks[0], reply_markup=first_markup)
+    for index, chunk in enumerate(chunks[1:], start=2):
+        last = index == len(chunks)
+        await message.answer(chunk, reply_markup=markup if last else None)
 
 
 async def _remember_prompt(state: FSMContext, message: Message) -> None:
@@ -266,13 +299,11 @@ async def open_entry(
         await _show_current(session, state, callback=callback)
         return
     await callback.answer()
-    message = _callback_message(callback)
-    if not message:
-        return
     extra = "" if entry.can_undo else f"\n\n{entry.block_reason}"
-    await message.edit_text(
+    await _edit_entry(
+        callback,
         f"{entry.title}\n\n{entry.body}{extra}",
-        reply_markup=journal_card_keyboard(entry),
+        journal_card_keyboard(entry),
     )
 
 
@@ -292,12 +323,11 @@ async def ask_undo(
         await callback.answer(entry.block_reason or "Это уже нельзя отменить.", show_alert=True)
         return
     await callback.answer()
-    message = _callback_message(callback)
-    if message:
-        await message.edit_text(
-            f"{entry.title}\n\n{entry.body}\n\nОтменить?",
-            reply_markup=journal_confirm_keyboard(entry.kind, entry.item_id),
-        )
+    await _edit_entry(
+        callback,
+        f"{entry.title}\n\n{entry.body}\n\nОтменить?",
+        journal_confirm_keyboard(entry.kind, entry.item_id),
+    )
 
 
 @router.callback_query(JournalCB.filter(F.action == "undo"))

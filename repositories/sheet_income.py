@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ColorOption, CurveOption, FlexOption, GripOption, StickModel
 from repositories import catalog
+from utils.labels import color_title
 from utils.money import format_money
 from utils.sheet import (
     fetch_csv,
@@ -37,9 +38,7 @@ class SheetPreview:
 
 
 def _color_title(color: ColorOption) -> str:
-    if color.is_default:
-        return f"{color.name} (классика)"
-    return color.name
+    return color_title(color)
 
 
 def _one_by_name(items: list, attr: str, raw: str, *, flex: bool = False) -> tuple[object | None, str | None]:
