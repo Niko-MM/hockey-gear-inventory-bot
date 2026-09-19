@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     bot_token: str = Field(default="")
     admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     db_path: str = str(PROJECT_ROOT / "data" / "bot.db")
+    income_sheet_url: str = ""
 
     @field_validator("admin_ids", mode="before")
     @classmethod
