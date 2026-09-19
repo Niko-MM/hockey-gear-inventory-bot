@@ -54,7 +54,7 @@ async def _show_colors(
     message = _callback_message(callback)
     if message:
         await message.edit_text(
-            f"Цвета модели «{model.name}».\n«Без цвета» — классика, его нельзя удалить.",
+            f"Цвета модели «{model.name}».\n«Стандарт» нельзя удалить.",
             reply_markup=colors_keyboard(model_id, colors),
         )
 
@@ -90,7 +90,7 @@ async def save_model(
     await state.clear()
     models = await catalog.list_models(session)
     await message.answer(
-        f"Модель «{name}» добавлена. Классика «Без цвета» создана сама.",
+        f"Модель «{name}» добавлена. «Стандарт» создан сам.",
         reply_markup=models_keyboard(models),
     )
 
@@ -176,7 +176,7 @@ async def delete_color(
         await catalog.delete_color(session, callback_data.item_id)
     except InUseError:
         await callback.answer(
-            "Нельзя удалить: классика или цвет уже используется.",
+            "Нельзя удалить: стандарт или цвет уже используется.",
             show_alert=True,
         )
         return

@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from db.models import Batch, CashDeposit, CashTransfer, CashWithdrawal, Product, Sale, StockWriteOff
+from db.models import Batch, CashDeposit, CashTransfer, CashWithdrawal, IncomeImport, Product, Sale, StockWriteOff
 from repositories import catalog
+from utils.labels import color_title
 from repositories.sales import OutOfStockError, delete_sale
 from repositories.sellers import InsufficientFundsError, delete_deposit
 from repositories.writeoffs import delete_writeoff
@@ -39,9 +41,7 @@ def _when(moment: datetime) -> str:
 
 
 def _color_title(color) -> str:
-    if color.is_default:
-        return f"{color.name} (классика)"
-    return color.name
+    return color_title(color)
 
 
 def _sku(product: Product) -> str:
@@ -101,7 +101,7 @@ def _from_batch(batch: Batch) -> JournalEntry:
         created_at=batch.created_at,
         button=(
             f"Поступление · {_when(batch.created_at)} · "
-            f"{batch.city.name} · {batch.quantity_in} шт"
+            f"{batch.city.name} · {batch.product.model.name} · {batch.quantity_in} шт"
         ),
         title="Поступление",
         body=(
@@ -114,6 +114,66 @@ def _from_batch(batch: Batch) -> JournalEntry:
         can_undo=not has_sales and not leftover_changed,
         block_reason=block_reason,
     )
+
+
+def _from_pack(members: list[Batch]) -> JournalEntry:
+    ordered = sorted(members, key=lambda item: (_sku(item.product), item.id))
+    first = ordered[0]
+    city = first.city.name
+    total_qty = sum(item.quantity_in for item in ordered)
+    total_cost = sum((item.purchase_price * item.quantity_in for item in ordered), Decimal("0"))
+    sold = any(bool(item.sales) for item in ordered)
+    written = any(
+        item.remaining_quantity != item.quantity_in and not item.sales for item in ordered
+    )
+    if sold and written:
+        block_reason = "С части партий уже продавали или списывали."
+    elif sold:
+        block_reason = "С части партий уже продавали."
+    elif written:
+        block_reason = "С части партий уже списывали."
+    else:
+        block_reason = ""
+    lines = [
+        _when(first.created_at),
+        city,
+        f"{len(ordered)} партий · {total_qty} шт · закуп {format_money(total_cost)}",
+        "",
+    ]
+    lines.extend(
+        f"{_sku(item.product)} — {item.quantity_in} шт · {format_money(item.purchase_price)}"
+        for item in ordered
+    )
+    return JournalEntry(
+        kind="income_pack",
+        item_id=first.import_id or 0,
+        created_at=first.created_at,
+        button=(
+            f"Поступление · {_when(first.created_at)} · {city} · "
+            f"{len(ordered)} парт. · {total_qty} шт"
+        ),
+        title="Поступление",
+        body="\n".join(lines),
+        can_undo=not sold and not written,
+        block_reason=block_reason,
+    )
+
+
+def _batch_entries(rows: list[Batch]) -> list[JournalEntry]:
+    packs: dict[int, list[Batch]] = {}
+    singles: list[Batch] = []
+    for batch in rows:
+        if batch.import_id is None:
+            singles.append(batch)
+            continue
+        packs.setdefault(batch.import_id, []).append(batch)
+    entries = [_from_batch(item) for item in singles]
+    for members in packs.values():
+        if len(members) == 1:
+            entries.append(_from_batch(members[0]))
+        else:
+            entries.append(_from_pack(members))
+    return entries
 
 
 def _from_transfer(row: CashTransfer) -> JournalEntry:
@@ -300,9 +360,25 @@ async def _collect_entries(
     withdrawals = await session.execute(withdrawals_stmt)
     deposits = await session.execute(deposits_stmt)
     writeoffs = await session.execute(writeoffs_stmt)
+    batch_rows = list(batches.scalars().all())
+    import_ids = {row.import_id for row in batch_rows if row.import_id is not None}
+    if import_ids:
+        extra = await session.execute(
+            select(Batch)
+            .options(
+                selectinload(Batch.city),
+                selectinload(Batch.sales),
+                _product_load(),
+            )
+            .where(Batch.import_id.in_(import_ids))
+        )
+        by_id = {row.id: row for row in batch_rows}
+        for row in extra.scalars().all():
+            by_id[row.id] = row
+        batch_rows = list(by_id.values())
     return (
         [_from_sale(row) for row in sales.scalars().all()]
-        + [_from_batch(row) for row in batches.scalars().all()]
+        + _batch_entries(batch_rows)
         + [_from_transfer(row) for row in transfers.scalars().all()]
         + [_from_withdraw(row) for row in withdrawals.scalars().all()]
         + [_from_deposit(row) for row in deposits.scalars().all()]
@@ -332,6 +408,18 @@ async def get_entry(session: AsyncSession, kind: str, item_id: int) -> JournalEn
             ],
         )
         return _from_batch(batch) if batch else None
+    if kind == "income_pack":
+        result = await session.execute(
+            select(Batch)
+            .options(
+                selectinload(Batch.city),
+                selectinload(Batch.sales),
+                _product_load(),
+            )
+            .where(Batch.import_id == item_id)
+        )
+        members = list(result.scalars().all())
+        return _from_pack(members) if members else None
     if kind == "transfer":
         row = await session.get(
             CashTransfer,
@@ -399,6 +487,29 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
         await session.delete(batch)
         await session.flush()
         await catalog.remove_product_if_unused(session, product_id)
+        return
+    if kind == "income_pack":
+        result = await session.execute(
+            select(Batch)
+            .options(selectinload(Batch.sales))
+            .where(Batch.import_id == item_id)
+        )
+        members = list(result.scalars().all())
+        if not members:
+            raise CannotUndoError("Этой записи уже нет.")
+        if any(item.sales for item in members):
+            raise CannotUndoError("С части партий уже продавали.")
+        if any(item.remaining_quantity != item.quantity_in for item in members):
+            raise CannotUndoError("С части партий уже списывали.")
+        product_ids = {item.product_id for item in members}
+        for item in members:
+            await session.delete(item)
+        pack = await session.get(IncomeImport, item_id)
+        if pack is not None:
+            await session.delete(pack)
+        await session.flush()
+        for product_id in product_ids:
+            await catalog.remove_product_if_unused(session, product_id)
         return
     if kind == "transfer":
         row = await session.get(CashTransfer, item_id)

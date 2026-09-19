@@ -102,9 +102,9 @@ def _parse_qty(text: str) -> int | None:
 
 
 def _color_title(color: ColorOption) -> str:
-    if color.is_default:
-        return f"{color.name} (классика)"
-    return color.name
+    from utils.labels import color_title
+
+    return color_title(color)
 
 
 async def _progress_lines(session: AsyncSession, data: dict) -> str:
@@ -528,6 +528,10 @@ async def save_sheet(
     created = 0
     total_qty = 0
     total_cost = Decimal("0")
+    pack = None
+    if len(raw_batches) > 1:
+        pack = await batches_repo.create_income_import(session, city_id)
+    import_id = pack.id if pack is not None else None
     for raw in raw_batches:
         if not isinstance(raw, dict):
             await callback.answer("Сессия сбилась. Начни поступление заново.", show_alert=True)
@@ -567,6 +571,7 @@ async def save_sheet(
             city_id=city_id,
             quantity=quantity,
             purchase_price=price,
+            import_id=import_id,
         )
         created += 1
         total_qty += quantity

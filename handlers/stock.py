@@ -28,9 +28,9 @@ def _callback_message(callback: CallbackQuery) -> Message | None:
 
 
 def _color_title(color: ColorOption) -> str:
-    if color.is_default:
-        return f"{color.name} (классика)"
-    return color.name
+    from utils.labels import color_title
+
+    return color_title(color)
 
 
 def _format_stock(header: str, rows: list[tuple], *, hide: frozenset[str]) -> str:

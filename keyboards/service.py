@@ -62,7 +62,7 @@ def colors_keyboard(model_id: int, colors: list[ColorOption]) -> InlineKeyboardM
     builder = InlineKeyboardBuilder()
     for color in colors:
         if color.is_default:
-            builder.row(InlineKeyboardButton(text=f"{color.name} (классика)", callback_data="noop"))
+            builder.row(InlineKeyboardButton(text="Стандарт", callback_data="noop"))
             continue
         builder.row(
             InlineKeyboardButton(text=color.name, callback_data="noop"),
