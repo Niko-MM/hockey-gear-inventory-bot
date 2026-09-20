@@ -11,7 +11,6 @@ from keyboards.stock import (
     back_keyboard,
     back_to_cities_keyboard,
     cities_keyboard,
-    curves_keyboard,
     flexes_keyboard,
     grips_keyboard,
 )
@@ -95,6 +94,18 @@ async def _send_text(
         await message.answer(chunk, reply_markup=markup if last else None)
 
 
+async def _selected_flex_ids(state: FSMContext) -> list[int]:
+    data = await state.get_data()
+    raw = data.get("stock_flex_ids")
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, int)]
+
+
+async def _clear_flex_ids(state: FSMContext) -> None:
+    await state.update_data(stock_flex_ids=[])
+
+
 async def _show_cities(
     session: AsyncSession,
     *,
@@ -163,6 +174,7 @@ async def _show_flexes(
     session: AsyncSession,
     city_id: int,
     grip_id: int,
+    state: FSMContext,
 ) -> None:
     city = await session.get(City, city_id)
     grip = await session.get(GripOption, grip_id)
@@ -171,7 +183,16 @@ async def _show_flexes(
         return
     raw = await stock.flexes_in_city(session, city_id, grip_id=grip_id)
     items = [(item.id, item.value, qty) for item, qty in raw]
-    rows = await stock.sku_with_stock(session, city_id, grip_id=grip_id)
+    stored = await _selected_flex_ids(state)
+    selected = [item_id for item_id, _, _ in items if item_id in set(stored)]
+    if selected != stored:
+        await state.update_data(stock_flex_ids=selected)
+    rows = await stock.sku_with_stock(
+        session,
+        city_id,
+        grip_id=grip_id,
+        flex_ids=selected or None,
+    )
     if not items or not rows:
         message = _callback_message(callback)
         if message:
@@ -186,56 +207,35 @@ async def _show_flexes(
                 ),
             )
         return
-    total = sum(qty for *_, qty in rows)
-    text = _format_stock(
-        f"{city.name} · {grip.name} — {total} шт",
-        rows,
-        hide=frozenset({"grip"}),
-    )
-    await _send_text(callback, f"{text}\n\nКакой флекс?", flexes_keyboard(city_id, grip_id, items))
-
-
-async def _show_curves(
-    callback: CallbackQuery,
-    session: AsyncSession,
-    city_id: int,
-    grip_id: int,
-    flex_id: int,
-) -> None:
-    city = await session.get(City, city_id)
-    grip = await session.get(GripOption, grip_id)
-    flex = await session.get(FlexOption, flex_id)
-    if city is None or grip is None or flex is None:
-        await callback.answer("Не найдено.", show_alert=True)
-        return
-    raw = await stock.curves_in_city(session, city_id, grip_id=grip_id, flex_id=flex_id)
-    items = [(item.id, item.name, qty) for item, qty in raw]
-    rows = await stock.sku_with_stock(session, city_id, grip_id=grip_id, flex_id=flex_id)
-    if not items or not rows:
-        message = _callback_message(callback)
-        if message:
-            await message.edit_text(
-                f"{city.name} · {grip.name} · {flex.value} — пусто.",
-                reply_markup=flexes_keyboard(
-                    city_id,
-                    grip_id,
-                    [
-                        (item.id, item.value, qty)
-                        for item, qty in await stock.flexes_in_city(session, city_id, grip_id=grip_id)
-                    ],
-                ),
+    curve_items: list[tuple[int, str, int]] = []
+    if selected:
+        curve_items = [
+            (item.id, item.name, qty)
+            for item, qty in await stock.curves_in_city(
+                session,
+                city_id,
+                grip_id=grip_id,
+                flex_ids=selected,
             )
-        return
+        ]
+    header = f"{city.name} · {grip.name}"
+    titles = [title for item_id, title, _ in items if item_id in set(selected)]
+    if titles:
+        header = f"{header} · {', '.join(titles)}"
     total = sum(qty for *_, qty in rows)
-    text = _format_stock(
-        f"{city.name} · {grip.name} · {flex.value} — {total} шт",
-        rows,
-        hide=frozenset({"grip", "flex"}),
-    )
+    hide = {"grip", "flex"} if len(selected) == 1 else {"grip"}
+    prompt = "Какой загиб?" if selected else "Какой флекс? Можно отметить несколько."
+    text = _format_stock(f"{header} — {total} шт", rows, hide=frozenset(hide))
     await _send_text(
         callback,
-        f"{text}\n\nКакой загиб?",
-        curves_keyboard(city_id, grip_id, flex_id, items),
+        f"{text}\n\n{prompt}",
+        flexes_keyboard(
+            city_id,
+            grip_id,
+            items,
+            selected=selected,
+            curves=curve_items,
+        ),
     )
 
 
@@ -244,33 +244,47 @@ async def _show_view(
     session: AsyncSession,
     city_id: int,
     grip_id: int,
-    flex_id: int,
     curve_id: int,
+    state: FSMContext,
+    *,
+    flex_id: int = 0,
 ) -> None:
     city = await session.get(City, city_id)
     if city is None:
         await callback.answer("Город не найден.", show_alert=True)
         return
 
-    if not grip_id or not flex_id or not curve_id:
+    flex_ids = await _selected_flex_ids(state)
+    if not flex_ids and flex_id:
+        flex_ids = [flex_id]
+    if not grip_id or not curve_id or not flex_ids:
         await callback.answer("Не найдено.", show_alert=True)
         return
 
     grip = await session.get(GripOption, grip_id)
-    flex = await session.get(FlexOption, flex_id)
     curve = await session.get(CurveOption, curve_id)
-    if grip is None or flex is None or curve is None:
+    flexes: list[FlexOption] = []
+    for item_id in flex_ids:
+        flex = await session.get(FlexOption, item_id)
+        if flex is not None:
+            flexes.append(flex)
+    if grip is None or curve is None or not flexes:
         await callback.answer("Не найдено.", show_alert=True)
         return
+    flexes.sort(key=lambda item: item.value)
 
     rows = await stock.sku_with_stock(
         session,
         city_id,
         grip_id=grip_id,
-        flex_id=flex_id,
+        flex_ids=[item.id for item in flexes],
         curve_id=curve_id,
     )
-    header_bits = f"{city.name} · {grip.name} · {flex.value} · {curve.name}"
+    flex_label = ", ".join(item.value for item in flexes)
+    header_bits = f"{city.name} · {grip.name} · {flex_label} · {curve.name}"
+    hide = {"grip", "curve"}
+    if len(flexes) == 1:
+        hide.add("flex")
     if not rows:
         text = f"{header_bits} — пусто."
     else:
@@ -278,9 +292,9 @@ async def _show_view(
         text = _format_stock(
             f"{header_bits} — {total} шт",
             rows,
-            hide=frozenset({"grip", "flex", "curve"}),
+            hide=frozenset(hide),
         )
-    await _send_text(callback, text, back_keyboard(city_id, grip_id=grip_id, flex_id=flex_id))
+    await _send_text(callback, text, back_keyboard(city_id, grip_id=grip_id))
 
 
 @router.message(F.text == BTN_STOCK)
@@ -290,8 +304,9 @@ async def open_stock(message: Message, state: FSMContext, session: AsyncSession)
 
 
 @router.callback_query(StockCB.filter(F.action == "cities"))
-async def list_cities(callback: CallbackQuery, session: AsyncSession) -> None:
+async def list_cities(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     await callback.answer()
+    await _clear_flex_ids(state)
     await _show_cities(session, callback=callback)
 
 
@@ -299,9 +314,11 @@ async def list_cities(callback: CallbackQuery, session: AsyncSession) -> None:
 async def open_grips(
     callback: CallbackQuery,
     callback_data: StockCB,
+    state: FSMContext,
     session: AsyncSession,
 ) -> None:
     await callback.answer()
+    await _clear_flex_ids(state)
     await _show_grips(callback, session, callback_data.city_id)
 
 
@@ -309,9 +326,11 @@ async def open_grips(
 async def open_all(
     callback: CallbackQuery,
     callback_data: StockCB,
+    state: FSMContext,
     session: AsyncSession,
 ) -> None:
     await callback.answer()
+    await _clear_flex_ids(state)
     await _show_all(callback, session, callback_data.city_id)
 
 
@@ -319,32 +338,49 @@ async def open_all(
 async def open_flexes(
     callback: CallbackQuery,
     callback_data: StockCB,
+    state: FSMContext,
     session: AsyncSession,
 ) -> None:
     await callback.answer()
-    await _show_flexes(callback, session, callback_data.city_id, callback_data.grip_id)
+    await _show_flexes(callback, session, callback_data.city_id, callback_data.grip_id, state)
+
+
+@router.callback_query(StockCB.filter(F.action == "pick_flex"))
+async def pick_flex(
+    callback: CallbackQuery,
+    callback_data: StockCB,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    flex_id = callback_data.flex_id
+    selected = await _selected_flex_ids(state)
+    if flex_id in selected:
+        selected = [item for item in selected if item != flex_id]
+    else:
+        selected = [*selected, flex_id]
+    await state.update_data(stock_flex_ids=selected)
+    await _show_flexes(callback, session, callback_data.city_id, callback_data.grip_id, state)
 
 
 @router.callback_query(StockCB.filter(F.action == "curves"))
 async def open_curves(
     callback: CallbackQuery,
     callback_data: StockCB,
+    state: FSMContext,
     session: AsyncSession,
 ) -> None:
     await callback.answer()
-    await _show_curves(
-        callback,
-        session,
-        callback_data.city_id,
-        callback_data.grip_id,
-        callback_data.flex_id,
-    )
+    if callback_data.flex_id:
+        await state.update_data(stock_flex_ids=[callback_data.flex_id])
+    await _show_flexes(callback, session, callback_data.city_id, callback_data.grip_id, state)
 
 
 @router.callback_query(StockCB.filter(F.action == "view"))
 async def open_view(
     callback: CallbackQuery,
     callback_data: StockCB,
+    state: FSMContext,
     session: AsyncSession,
 ) -> None:
     await callback.answer()
@@ -353,6 +389,7 @@ async def open_view(
         session,
         callback_data.city_id,
         callback_data.grip_id,
-        callback_data.flex_id,
         callback_data.curve_id,
+        state,
+        flex_id=callback_data.flex_id,
     )
