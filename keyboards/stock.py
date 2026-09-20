@@ -85,7 +85,7 @@ def flexes_keyboard(
         for curve_id, title, qty in curves:
             builder.row(
                 InlineKeyboardButton(
-                    text=f"{title} — {qty} шт",
+                    text=f"загиб {title} — {qty} шт",
                     callback_data=StockCB(
                         action="view",
                         city_id=city_id,
