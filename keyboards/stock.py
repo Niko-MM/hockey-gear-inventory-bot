@@ -62,20 +62,38 @@ def flexes_keyboard(
     city_id: int,
     grip_id: int,
     items: Sequence[tuple[int, str, int]],
+    *,
+    selected: Sequence[int] = (),
+    curves: Sequence[tuple[int, str, int]] = (),
 ) -> InlineKeyboardMarkup:
+    chosen = set(selected)
     builder = InlineKeyboardBuilder()
     for flex_id, title, qty in items:
+        mark = "✓ " if flex_id in chosen else ""
         builder.row(
             InlineKeyboardButton(
-                text=f"{title} — {qty} шт",
+                text=f"{mark}{title} — {qty} шт",
                 callback_data=StockCB(
-                    action="curves",
+                    action="pick_flex",
                     city_id=city_id,
                     grip_id=grip_id,
                     flex_id=flex_id,
                 ).pack(),
             )
         )
+    if chosen and curves:
+        for curve_id, title, qty in curves:
+            builder.row(
+                InlineKeyboardButton(
+                    text=f"{title} — {qty} шт",
+                    callback_data=StockCB(
+                        action="view",
+                        city_id=city_id,
+                        grip_id=grip_id,
+                        curve_id=curve_id,
+                    ).pack(),
+                )
+            )
     builder.row(
         InlineKeyboardButton(
             text="« Хват",
@@ -85,47 +103,13 @@ def flexes_keyboard(
     return builder.as_markup()
 
 
-def curves_keyboard(
-    city_id: int,
-    grip_id: int,
-    flex_id: int,
-    items: Sequence[tuple[int, str, int]],
-) -> InlineKeyboardMarkup:
+def back_keyboard(city_id: int, *, grip_id: int = 0) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for curve_id, title, qty in items:
-        builder.row(
-            InlineKeyboardButton(
-                text=f"{title} — {qty} шт",
-                callback_data=StockCB(
-                    action="view",
-                    city_id=city_id,
-                    grip_id=grip_id,
-                    flex_id=flex_id,
-                    curve_id=curve_id,
-                ).pack(),
-            )
-        )
-    builder.row(
-        InlineKeyboardButton(
-            text="« Флекс",
-            callback_data=StockCB(action="flexes", city_id=city_id, grip_id=grip_id).pack(),
-        )
-    )
-    return builder.as_markup()
-
-
-def back_keyboard(city_id: int, *, grip_id: int = 0, flex_id: int = 0) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    if grip_id and flex_id:
+    if grip_id:
         builder.row(
             InlineKeyboardButton(
                 text="« Загиб",
-                callback_data=StockCB(
-                    action="curves",
-                    city_id=city_id,
-                    grip_id=grip_id,
-                    flex_id=flex_id,
-                ).pack(),
+                callback_data=StockCB(action="flexes", city_id=city_id, grip_id=grip_id).pack(),
             )
         )
     else:

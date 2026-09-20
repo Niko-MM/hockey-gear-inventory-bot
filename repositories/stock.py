@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -157,14 +159,17 @@ async def curves_in_city(
     city_id: int,
     *,
     grip_id: int | None = None,
-    flex_id: int | None = None,
+    flex_ids: Sequence[int] | None = None,
 ) -> list[tuple[CurveOption, int]]:
     qty = func.sum(Batch.remaining_quantity)
     filters = [Batch.city_id == city_id, Batch.remaining_quantity > 0]
     if grip_id is not None:
         filters.append(Product.grip_id == grip_id)
-    if flex_id is not None:
-        filters.append(Product.flex_id == flex_id)
+    if flex_ids:
+        if len(flex_ids) == 1:
+            filters.append(Product.flex_id == flex_ids[0])
+        else:
+            filters.append(Product.flex_id.in_(list(flex_ids)))
     result = await session.execute(
         select(CurveOption, qty)
         .join(Product, Product.curve_id == CurveOption.id)
@@ -180,14 +185,17 @@ async def sku_with_stock(
     session: AsyncSession,
     city_id: int,
     *,
-    flex_id: int | None = None,
+    flex_ids: Sequence[int] | None = None,
     grip_id: int | None = None,
     curve_id: int | None = None,
 ) -> list[tuple[StickModel, ColorOption, FlexOption, GripOption, CurveOption, int]]:
     qty = func.sum(Batch.remaining_quantity)
     filters = [Batch.city_id == city_id, Batch.remaining_quantity > 0]
-    if flex_id is not None:
-        filters.append(Product.flex_id == flex_id)
+    if flex_ids:
+        if len(flex_ids) == 1:
+            filters.append(Product.flex_id == flex_ids[0])
+        else:
+            filters.append(Product.flex_id.in_(list(flex_ids)))
     if grip_id is not None:
         filters.append(Product.grip_id == grip_id)
     if curve_id is not None:
