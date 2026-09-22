@@ -27,7 +27,7 @@ async def cb_manage(callback: CallbackQuery) -> None:
     await callback.answer()
     if callback.message:
         await callback.message.edit_text(
-            "Справочник: модели, цвета, флекс, загиб, хват и продавцы.",
+            "Номенклатура: модели, цвета, флекс, загиб, хват и продавцы.",
             reply_markup=manage_menu(),
         )
 

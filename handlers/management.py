@@ -15,7 +15,7 @@ from keyboards.service import (
 from repositories import catalog
 from repositories import sellers as sellers_repo
 from repositories.catalog import DuplicateNameError, InUseError
-from states.catalog import AddColor, AddCurve, AddFlex, AddGrip, AddModel
+from states.catalog import AddColor, AddCurve, AddFlex, AddGrip, AddModel, RenameModel
 from states.sellers import AddSeller
 
 router = Router()
@@ -112,6 +112,56 @@ async def delete_model(
     await _show_models(callback, session)
 
 
+@router.callback_query(ManageCB.filter((F.section == "model") & (F.action == "rename")))
+async def start_rename_model(
+    callback: CallbackQuery,
+    callback_data: ManageCB,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    model = await catalog.get_model(session, callback_data.item_id)
+    if model is None:
+        await callback.answer("Модель не найдена.", show_alert=True)
+        return
+    await state.set_state(RenameModel.name)
+    await state.update_data(model_id=model.id)
+    await callback.answer()
+    message = _callback_message(callback)
+    if message:
+        await message.answer(f"Новое название для «{model.name}»?")
+
+
+@router.message(RenameModel.name, F.text, ~F.text.in_(MENU_TEXTS))
+async def save_rename_model(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    name = _clean_name(message.text or "")
+    if not name:
+        await message.answer(NOT_TEXT)
+        return
+    data = await state.get_data()
+    raw_model_id = data.get("model_id")
+    if not isinstance(raw_model_id, int):
+        await state.clear()
+        await message.answer("Открой Номенклатуру заново.")
+        return
+    try:
+        model = await catalog.rename_model(session, raw_model_id, name)
+    except DuplicateNameError:
+        await message.answer("Такая модель уже есть. Напиши другое название.")
+        return
+    if model is None:
+        await state.clear()
+        await message.answer("Модель не найдена.")
+        return
+    await state.clear()
+    colors = await catalog.list_colors(session, model.id)
+    await message.answer(
+        f"Модель теперь «{model.name}».",
+        reply_markup=colors_keyboard(model.id, colors),
+    )
+
+
 @router.callback_query(ManageCB.filter((F.section == "color") & (F.action == "list")))
 async def list_colors(
     callback: CallbackQuery,
@@ -148,7 +198,7 @@ async def save_color(
     raw_model_id = data.get("model_id")
     if not isinstance(raw_model_id, int):
         await state.clear()
-        await message.answer("Открой Справочник заново.")
+        await message.answer("Открой Номенклатуру заново.")
         return
     model_id = raw_model_id
     try:

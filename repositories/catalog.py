@@ -61,6 +61,22 @@ async def create_model(session: AsyncSession, name: str) -> StickModel:
     return model
 
 
+async def rename_model(session: AsyncSession, model_id: int, name: str) -> StickModel | None:
+    model = await session.get(StickModel, model_id)
+    if model is None:
+        return None
+    if model.name == name:
+        return model
+    exists = await session.scalar(
+        select(StickModel.id).where(StickModel.name == name, StickModel.id != model_id)
+    )
+    if exists is not None:
+        raise DuplicateNameError
+    model.name = name
+    await session.flush()
+    return model
+
+
 async def delete_model(session: AsyncSession, model_id: int) -> None:
     model = await session.get(StickModel, model_id)
     if model is None:
