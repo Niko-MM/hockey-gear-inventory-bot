@@ -52,7 +52,7 @@ def pick_seller_keyboard(
             )
         )
     builder.row(
-        InlineKeyboardButton(text="« Кассы", callback_data=NavCB(to="accounting").pack())
+        InlineKeyboardButton(text="« Финансы", callback_data=NavCB(to="accounting").pack())
     )
     return builder.as_markup()
 
@@ -118,6 +118,6 @@ def report_keyboard() -> InlineKeyboardMarkup:
         )
     )
     builder.row(
-        InlineKeyboardButton(text="« Кассы", callback_data=NavCB(to="accounting").pack())
+        InlineKeyboardButton(text="« Финансы", callback_data=NavCB(to="accounting").pack())
     )
     return builder.as_markup()

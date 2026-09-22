@@ -9,9 +9,9 @@ from keyboards.callbacks import ManageCB, NavCB
 
 def service_menu() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Кассы", callback_data=NavCB(to="accounting").pack())
+    builder.button(text="Финансы", callback_data=NavCB(to="accounting").pack())
     builder.button(text="Списать", callback_data=NavCB(to="writeoff").pack())
-    builder.button(text="Справочник", callback_data=NavCB(to="manage").pack())
+    builder.button(text="Номенклатура", callback_data=NavCB(to="manage").pack())
     builder.button(text="Журнал", callback_data=NavCB(to="edits").pack())
     builder.adjust(1)
     return builder.as_markup()
@@ -53,7 +53,7 @@ def models_keyboard(models: list[StickModel]) -> InlineKeyboardMarkup:
         )
     )
     builder.row(
-        InlineKeyboardButton(text="« Справочник", callback_data=NavCB(to="manage").pack())
+        InlineKeyboardButton(text="« Номенклатура", callback_data=NavCB(to="manage").pack())
     )
     return builder.as_markup()
 
@@ -84,6 +84,12 @@ def colors_keyboard(model_id: int, colors: list[ColorOption]) -> InlineKeyboardM
     )
     builder.row(
         InlineKeyboardButton(
+            text="Переименовать",
+            callback_data=ManageCB(section="model", action="rename", item_id=model_id).pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
             text="« Модели",
             callback_data=ManageCB(section="model", action="list").pack(),
         )
@@ -108,7 +114,7 @@ def sellers_keyboard(sellers: list[Seller]) -> InlineKeyboardMarkup:
         )
     )
     builder.row(
-        InlineKeyboardButton(text="« Справочник", callback_data=NavCB(to="manage").pack())
+        InlineKeyboardButton(text="« Номенклатура", callback_data=NavCB(to="manage").pack())
     )
     return builder.as_markup()
 
@@ -135,6 +141,6 @@ def named_options_keyboard(
         )
     )
     builder.row(
-        InlineKeyboardButton(text="« Справочник", callback_data=NavCB(to="manage").pack())
+        InlineKeyboardButton(text="« Номенклатура", callback_data=NavCB(to="manage").pack())
     )
     return builder.as_markup()

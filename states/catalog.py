@@ -5,6 +5,10 @@ class AddModel(StatesGroup):
     name = State()
 
 
+class RenameModel(StatesGroup):
+    name = State()
+
+
 class AddColor(StatesGroup):
     name = State()
 

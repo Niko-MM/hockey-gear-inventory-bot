@@ -162,8 +162,8 @@ def _format_report(report: reports_repo.PeriodReport) -> str:
 
 def _cash_text(rows: list) -> str:
     if not rows:
-        return "Касс нет. Добавь продавцов: Сервис → Справочник → Продавцы."
-    lines = ["Кассы", ""]
+        return "Касс нет. Добавь продавцов: Сервис → Номенклатура → Продавцы."
+    lines = ["Финансы", ""]
     lines.extend(f"{seller.name} — {format_money(balance)}" for seller, balance in rows)
     total = sum((balance for _, balance in rows), Decimal("0"))
     lines.append("")
