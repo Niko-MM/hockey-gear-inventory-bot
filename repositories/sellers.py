@@ -3,7 +3,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import CashDeposit, CashTransfer, CashWithdrawal, Sale, Seller
+from db.models import CashDeposit, CashTransfer, CashWithdrawal, Reservation, Sale, Seller
 from repositories.catalog import DuplicateNameError, InUseError
 
 
@@ -57,7 +57,10 @@ async def delete_seller(session: AsyncSession, seller_id: int) -> None:
         .select_from(CashDeposit)
         .where(CashDeposit.seller_id == seller_id)
     )
-    if sales_count or transfers_count or withdrawals_count or deposits_count:
+    holds_count = await session.scalar(
+        select(func.count()).select_from(Reservation).where(Reservation.seller_id == seller_id)
+    )
+    if sales_count or transfers_count or withdrawals_count or deposits_count or holds_count:
         raise InUseError
     await session.delete(seller)
 

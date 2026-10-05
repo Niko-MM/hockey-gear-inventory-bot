@@ -50,6 +50,7 @@ class Seller(Base):
     )
     withdrawals: Mapped[list["CashWithdrawal"]] = relationship(back_populates="seller")
     deposits: Mapped[list["CashDeposit"]] = relationship(back_populates="seller")
+    reservations: Mapped[list["Reservation"]] = relationship(back_populates="seller")
 
 
 class StickModel(Base):
@@ -181,6 +182,7 @@ class Batch(Base):
     income_import: Mapped[IncomeImport | None] = relationship(back_populates="batches")
     sales: Mapped[list["Sale"]] = relationship(back_populates="batch")
     write_offs: Mapped[list["StockWriteOff"]] = relationship(back_populates="batch")
+    reservations: Mapped[list["Reservation"]] = relationship(back_populates="batch")
 
 
 class Sale(Base):
@@ -282,3 +284,32 @@ class StockWriteOff(Base):
     )
 
     batch: Mapped[Batch] = relationship(back_populates="write_offs")
+
+
+class Reservation(Base):
+    __tablename__ = "reservations"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_reservation_quantity_positive"),
+        CheckConstraint("total_amount >= 0", name="ck_reservation_amount_non_negative"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), nullable=False)
+    seller_id: Mapped[int] = mapped_column(ForeignKey("sellers.id"), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    batch: Mapped[Batch] = relationship(back_populates="reservations")
+    seller: Mapped[Seller] = relationship(back_populates="reservations")
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(String(200), nullable=False)

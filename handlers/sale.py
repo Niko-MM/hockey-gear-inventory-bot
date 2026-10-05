@@ -7,11 +7,20 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Batch, City, ColorOption, CurveOption, FlexOption, GripOption, StickModel
+from db.models import Batch, City, ColorOption, CurveOption, FlexOption, GripOption, Reservation, StickModel
 from keyboards.callbacks import SaleCB
 from keyboards.menu import BTN_INCOME, BTN_SALE, BTN_SERVICE, BTN_STOCK
-from keyboards.sale import choice_keyboard, confirm_keyboard, nav_keyboard, qty_keyboard
+from keyboards.sale import (
+    choice_keyboard,
+    city_keyboard,
+    confirm_keyboard,
+    hold_card_keyboard,
+    holds_keyboard,
+    nav_keyboard,
+    qty_keyboard,
+)
 from repositories import catalog
+from repositories import reservations as holds_repo
 from repositories import sellers as sellers_repo
 from repositories import stock
 from repositories.sales import OutOfStockError, create_sale
@@ -368,6 +377,7 @@ def _back_step(data: dict, current: str) -> str | None:
         "batch": "curve",
         "seller": "amount",
         "confirm": "seller",
+        "holds": "city",
     }
     return mapping.get(current)
 
@@ -405,7 +415,10 @@ def _keyboard(
     step: str,
     items: list[tuple[int, int, str]],
     remaining: int = 0,
+    hold_qty: int = 0,
 ) -> InlineKeyboardMarkup:
+    if step == "city":
+        return city_keyboard(items, hold_qty)
     if step == "qty":
         return qty_keyboard(remaining)
     if step == "amount":
@@ -437,11 +450,30 @@ async def _show_step(
     remaining = await _batch_remaining(session, data) if step == "qty" else 0
     progress = await _progress_lines(session, data)
     if step == "confirm":
-        text = f"{progress}\n\nЗаписать?"
+        text = f"{progress}\n\nЗаписать или забронировать?"
     else:
         text = _screen_text(progress, step, items, remaining)
-    markup = _keyboard(step, items, remaining)
+    hold_qty = await holds_repo.reserved_quantity(session) if step == "city" else 0
+    markup = _keyboard(step, items, remaining, hold_qty)
+    await _edit_screen(
+        state,
+        text,
+        markup,
+        callback=callback,
+        message=message,
+        replace=replace,
+    )
 
+
+async def _edit_screen(
+    state: FSMContext,
+    text: str,
+    markup: InlineKeyboardMarkup | None,
+    *,
+    callback: CallbackQuery | None = None,
+    message: Message | None = None,
+    replace: bool = False,
+) -> None:
     target = _callback_message(callback) if callback else None
     if target and not replace:
         try:
@@ -461,6 +493,87 @@ async def _show_step(
             await _delete_prompt(message.bot, state)
         sent = await message.answer(text, reply_markup=markup)
         await _remember_prompt(state, sent)
+
+
+def _hold_button(hold: Reservation) -> str:
+    batch = hold.batch
+    product = batch.product
+    sku = f"{product.model.name} / {_color_title(product.color)} · {product.flex.value}"
+    return f"{batch.city.name} · {sku} · {hold.quantity} шт"
+
+
+def _hold_card_text(hold: Reservation) -> str:
+    batch = hold.batch
+    product = batch.product
+    sku = (
+        f"{product.model.name} / {_color_title(product.color)} · "
+        f"{product.flex.value} · {product.grip.name} · {product.curve.name}"
+    )
+    money = format_money(hold.total_amount)
+    return (
+        "Бронь\n"
+        f"\n{batch.city.name}"
+        f"\n{sku}"
+        f"\n{hold.quantity} шт"
+        f"\n\nСумма: {money}"
+        f"\nЧек: {money}"
+        f"\nКасса: {hold.seller.name}"
+    )
+
+
+async def _show_holds(
+    session: AsyncSession,
+    state: FSMContext,
+    *,
+    callback: CallbackQuery | None = None,
+    message: Message | None = None,
+) -> None:
+    await state.set_state(None)
+    holds = await holds_repo.list_holds(session)
+    if not holds:
+        await _show_step(session, state, "city", callback=callback, message=message)
+        return
+    items = [(hold.id, _hold_button(hold)) for hold in holds]
+    await _edit_screen(
+        state,
+        "Брони",
+        holds_keyboard(items),
+        callback=callback,
+        message=message,
+    )
+
+
+async def _show_hold_card(
+    session: AsyncSession,
+    state: FSMContext,
+    hold_id: int,
+    callback: CallbackQuery,
+) -> bool:
+    hold = await holds_repo.get_hold(session, hold_id)
+    if hold is None:
+        return False
+    await state.set_state(None)
+    await _edit_screen(
+        state,
+        _hold_card_text(hold),
+        hold_card_keyboard(hold.id),
+        callback=callback,
+    )
+    return True
+
+
+async def _finish_prompt(callback: CallbackQuery, state: FSMContext, text: str) -> None:
+    await state.clear()
+    await callback.answer()
+    message = _callback_message(callback)
+    if message is None:
+        return
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        await message.edit_text(text, reply_markup=None)
+        return
+    await message.answer(text)
 
 
 @router.message(F.text == BTN_SALE)
@@ -603,16 +716,100 @@ async def save_sale(
         await callback.answer("На партии осталось меньше, чем нужно.", show_alert=True)
         return
     summary = await _progress_lines(session, data)
-    await state.clear()
-    await callback.answer()
-    message = _callback_message(callback)
-    if message:
-        final = (
-            f"✅ Продал\n\n{_receipt(summary)}"
+    await _finish_prompt(callback, state, f"✅ Продал\n\n{_receipt(summary)}")
+
+
+@router.callback_query(SaleCB.filter(F.action == "reserve"))
+async def reserve_sale(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    data = await state.get_data()
+    batch_id = _int_data(data, "batch_id")
+    seller_id = _int_data(data, "seller_id")
+    quantity = _int_data(data, "quantity") or 1
+    raw_amount = data.get("total_amount")
+    if batch_id is None or seller_id is None or not isinstance(raw_amount, str):
+        await callback.answer("Сессия сбилась. Начни продажу заново.", show_alert=True)
+        await state.clear()
+        return
+    try:
+        await holds_repo.create_reservation(
+            session,
+            batch_id=batch_id,
+            seller_id=seller_id,
+            total_amount=Decimal(raw_amount),
+            quantity=quantity,
         )
-        try:
-            await message.delete()
-        except TelegramBadRequest:
-            await message.edit_text(final, reply_markup=None)
-            return
-        await message.answer(final)
+    except OutOfStockError:
+        await callback.answer("На партии осталось меньше, чем нужно.", show_alert=True)
+        return
+    summary = await _progress_lines(session, data)
+    await _finish_prompt(callback, state, f"✅ Забронировал\n\n{_receipt(summary)}")
+
+
+@router.callback_query(SaleCB.filter(F.action == "holds"))
+async def list_sale_holds(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    await callback.answer()
+    await _show_holds(session, state, callback=callback)
+
+
+@router.callback_query(SaleCB.filter(F.action == "hold"))
+async def open_sale_hold(
+    callback: CallbackQuery,
+    callback_data: SaleCB,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    if not callback_data.item_id:
+        await callback.answer("Бронь не найдена.", show_alert=True)
+        return
+    found = await _show_hold_card(session, state, callback_data.item_id, callback)
+    if not found:
+        await callback.answer("Этой брони уже нет.", show_alert=True)
+        await _show_holds(session, state, callback=callback)
+        return
+    await callback.answer()
+
+
+@router.callback_query(SaleCB.filter(F.action == "hold_save"))
+async def complete_sale_hold(
+    callback: CallbackQuery,
+    callback_data: SaleCB,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    hold = await holds_repo.get_hold(session, callback_data.item_id)
+    if hold is None:
+        await callback.answer("Этой брони уже нет.", show_alert=True)
+        await _show_holds(session, state, callback=callback)
+        return
+    receipt = _hold_card_text(hold).removeprefix("Бронь").strip()
+    await holds_repo.complete_reservation(session, hold)
+    await _finish_prompt(callback, state, f"✅ Продал\n\n{receipt}")
+
+
+@router.callback_query(SaleCB.filter(F.action == "hold_cancel"))
+async def cancel_sale_hold(
+    callback: CallbackQuery,
+    callback_data: SaleCB,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    hold = await holds_repo.get_hold(session, callback_data.item_id)
+    if hold is None:
+        await callback.answer("Этой брони уже нет.", show_alert=True)
+        await _show_holds(session, state, callback=callback)
+        return
+    try:
+        await holds_repo.cancel_reservation(session, hold)
+    except OutOfStockError:
+        await callback.answer("Не получилось вернуть клюшки на партию.", show_alert=True)
+        return
+    await callback.answer("Бронь снята")
+    await _show_holds(session, state, callback=callback)
