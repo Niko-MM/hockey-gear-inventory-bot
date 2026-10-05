@@ -6,8 +6,20 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from db.models import Batch, CashDeposit, CashTransfer, CashWithdrawal, IncomeImport, Product, Sale, StockWriteOff
+from db.models import (
+    Batch,
+    CashDeposit,
+    CashTransfer,
+    CashWithdrawal,
+    IncomeImport,
+    Product,
+    Reservation,
+    Sale,
+    StockWriteOff,
+)
 from repositories import catalog
+from repositories import reservations as holds_repo
+from repositories.sales import OutOfStockError, delete_sale
 from utils.labels import color_title
 from repositories.sales import OutOfStockError, delete_sale
 from repositories.sellers import InsufficientFundsError, delete_deposit
@@ -85,12 +97,39 @@ def _from_sale(sale: Sale) -> JournalEntry:
     )
 
 
+def _from_hold(hold: Reservation) -> JournalEntry:
+    batch = hold.batch
+    city = batch.city.name
+    sku = _sku(batch.product)
+    seller = hold.seller.name if hold.seller else "—"
+    qty = f"{hold.quantity} шт"
+    money = format_money(hold.total_amount)
+    return JournalEntry(
+        kind="hold",
+        item_id=hold.id,
+        created_at=hold.created_at,
+        button=f"Бронь · {_when(hold.created_at)} · {qty} · {money}",
+        title="Бронь",
+        body=(
+            f"{_when(hold.created_at)}\n"
+            f"{city}\n"
+            f"{sku}\n"
+            f"{qty} · сумма {money}\n"
+            f"Касса: {seller}"
+        ),
+        can_undo=True,
+    )
+
+
 def _from_batch(batch: Batch) -> JournalEntry:
     has_sales = bool(batch.sales)
+    has_holds = bool(batch.reservations)
     leftover_changed = batch.quantity_in != batch.remaining_quantity
     sku = _sku(batch.product)
     if has_sales:
         block_reason = "С этой партии уже продавали."
+    elif has_holds:
+        block_reason = "С этой партии есть бронь."
     elif leftover_changed:
         block_reason = "С этой партии уже списывали."
     else:
@@ -111,7 +150,7 @@ def _from_batch(batch: Batch) -> JournalEntry:
             f"Пришло {batch.quantity_in} шт · осталось {batch.remaining_quantity}\n"
             f"Закуп: {format_money(batch.purchase_price)}"
         ),
-        can_undo=not has_sales and not leftover_changed,
+        can_undo=not has_sales and not has_holds and not leftover_changed,
         block_reason=block_reason,
     )
 
@@ -123,13 +162,17 @@ def _from_pack(members: list[Batch]) -> JournalEntry:
     total_qty = sum(item.quantity_in for item in ordered)
     total_cost = sum((item.purchase_price * item.quantity_in for item in ordered), Decimal("0"))
     sold = any(bool(item.sales) for item in ordered)
+    held = any(bool(item.reservations) for item in ordered)
     written = any(
-        item.remaining_quantity != item.quantity_in and not item.sales for item in ordered
+        item.remaining_quantity != item.quantity_in and not item.sales and not item.reservations
+        for item in ordered
     )
-    if sold and written:
-        block_reason = "С части партий уже продавали или списывали."
+    if sold and (held or written):
+        block_reason = "С части партий уже продавали, бронировали или списывали."
     elif sold:
         block_reason = "С части партий уже продавали."
+    elif held:
+        block_reason = "С части партий есть бронь."
     elif written:
         block_reason = "С части партий уже списывали."
     else:
@@ -154,7 +197,7 @@ def _from_pack(members: list[Batch]) -> JournalEntry:
         ),
         title="Поступление",
         body="\n".join(lines),
-        can_undo=not sold and not written,
+        can_undo=not sold and not held and not written,
         block_reason=block_reason,
     )
 
@@ -267,6 +310,7 @@ async def list_period(
         withdraw_filters=_period_filter(CashWithdrawal.created_at, start, end),
         deposit_filters=_period_filter(CashDeposit.created_at, start, end),
         writeoff_filters=_period_filter(StockWriteOff.created_at, start, end),
+        hold_filters=_period_filter(Reservation.created_at, start, end),
     )
     entries.sort(key=lambda item: item.created_at, reverse=True)
     total = len(entries)
@@ -287,6 +331,7 @@ async def _collect_entries(
     withdraw_filters=(),
     deposit_filters=(),
     writeoff_filters=(),
+    hold_filters=(),
     limit: int | None = None,
 ) -> list[JournalEntry]:
     sales_stmt = (
@@ -304,6 +349,7 @@ async def _collect_entries(
         .options(
             selectinload(Batch.city),
             selectinload(Batch.sales),
+            selectinload(Batch.reservations),
             _product_load(),
         )
         .order_by(Batch.created_at.desc())
@@ -346,6 +392,16 @@ async def _collect_entries(
     )
     if writeoff_filters:
         writeoffs_stmt = writeoffs_stmt.where(*writeoff_filters)
+    holds_stmt = (
+        select(Reservation)
+        .options(
+            selectinload(Reservation.seller),
+            selectinload(Reservation.batch).options(selectinload(Batch.city), _product_load()),
+        )
+        .order_by(Reservation.created_at.desc())
+    )
+    if hold_filters:
+        holds_stmt = holds_stmt.where(*hold_filters)
     if limit is not None:
         sales_stmt = sales_stmt.limit(limit)
         batches_stmt = batches_stmt.limit(limit)
@@ -353,6 +409,7 @@ async def _collect_entries(
         withdrawals_stmt = withdrawals_stmt.limit(limit)
         deposits_stmt = deposits_stmt.limit(limit)
         writeoffs_stmt = writeoffs_stmt.limit(limit)
+        holds_stmt = holds_stmt.limit(limit)
 
     sales = await session.execute(sales_stmt)
     batches = await session.execute(batches_stmt)
@@ -360,6 +417,7 @@ async def _collect_entries(
     withdrawals = await session.execute(withdrawals_stmt)
     deposits = await session.execute(deposits_stmt)
     writeoffs = await session.execute(writeoffs_stmt)
+    holds = await session.execute(holds_stmt)
     batch_rows = list(batches.scalars().all())
     import_ids = {row.import_id for row in batch_rows if row.import_id is not None}
     if import_ids:
@@ -368,6 +426,7 @@ async def _collect_entries(
             .options(
                 selectinload(Batch.city),
                 selectinload(Batch.sales),
+                selectinload(Batch.reservations),
                 _product_load(),
             )
             .where(Batch.import_id.in_(import_ids))
@@ -383,6 +442,7 @@ async def _collect_entries(
         + [_from_withdraw(row) for row in withdrawals.scalars().all()]
         + [_from_deposit(row) for row in deposits.scalars().all()]
         + [_from_writeoff(row) for row in writeoffs.scalars().all()]
+        + [_from_hold(row) for row in holds.scalars().all()]
     )
 
 
@@ -404,6 +464,7 @@ async def get_entry(session: AsyncSession, kind: str, item_id: int) -> JournalEn
             options=[
                 selectinload(Batch.city),
                 selectinload(Batch.sales),
+                selectinload(Batch.reservations),
                 _product_load(),
             ],
         )
@@ -414,6 +475,7 @@ async def get_entry(session: AsyncSession, kind: str, item_id: int) -> JournalEn
             .options(
                 selectinload(Batch.city),
                 selectinload(Batch.sales),
+                selectinload(Batch.reservations),
                 _product_load(),
             )
             .where(Batch.import_id == item_id)
@@ -456,6 +518,16 @@ async def get_entry(session: AsyncSession, kind: str, item_id: int) -> JournalEn
             ],
         )
         return _from_writeoff(row) if row else None
+    if kind == "hold":
+        hold = await session.get(
+            Reservation,
+            item_id,
+            options=[
+                selectinload(Reservation.seller),
+                selectinload(Reservation.batch).options(selectinload(Batch.city), _product_load()),
+            ],
+        )
+        return _from_hold(hold) if hold else None
     return None
 
 
@@ -476,11 +548,17 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
             raise CannotUndoError("Не получилось вернуть клюшки на партию.") from exc
         return
     if kind == "income":
-        batch = await session.get(Batch, item_id, options=[selectinload(Batch.sales)])
+        batch = await session.get(
+            Batch,
+            item_id,
+            options=[selectinload(Batch.sales), selectinload(Batch.reservations)],
+        )
         if batch is None:
             raise CannotUndoError("Этой записи уже нет.")
         if batch.sales:
             raise CannotUndoError("С этой партии уже продавали.")
+        if batch.reservations:
+            raise CannotUndoError("С этой партии есть бронь.")
         if batch.remaining_quantity != batch.quantity_in:
             raise CannotUndoError("С этой партии уже списывали.")
         product_id = batch.product_id
@@ -491,7 +569,7 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
     if kind == "income_pack":
         result = await session.execute(
             select(Batch)
-            .options(selectinload(Batch.sales))
+            .options(selectinload(Batch.sales), selectinload(Batch.reservations))
             .where(Batch.import_id == item_id)
         )
         members = list(result.scalars().all())
@@ -499,6 +577,8 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
             raise CannotUndoError("Этой записи уже нет.")
         if any(item.sales for item in members):
             raise CannotUndoError("С части партий уже продавали.")
+        if any(item.reservations for item in members):
+            raise CannotUndoError("С части партий есть бронь.")
         if any(item.remaining_quantity != item.quantity_in for item in members):
             raise CannotUndoError("С части партий уже списывали.")
         product_ids = {item.product_id for item in members}
@@ -538,6 +618,15 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
             raise CannotUndoError("Этой записи уже нет.")
         try:
             await delete_writeoff(session, row)
+        except OutOfStockError as exc:
+            raise CannotUndoError("Не получилось вернуть клюшки на партию.") from exc
+        return
+    if kind == "hold":
+        hold = await session.get(Reservation, item_id)
+        if hold is None:
+            raise CannotUndoError("Этой записи уже нет.")
+        try:
+            await holds_repo.cancel_reservation(session, hold)
         except OutOfStockError as exc:
             raise CannotUndoError("Не получилось вернуть клюшки на партию.") from exc
         return

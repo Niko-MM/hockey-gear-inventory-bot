@@ -18,6 +18,7 @@ from handlers.stock import router as stock_router
 from handlers.writeoff import router as writeoff_router
 from middlewares.admin import AdminOnlyMiddleware
 from middlewares.db import DbSessionMiddleware
+from utils.admin_notice import maybe_send_reservation_notice
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +44,7 @@ async def main() -> None:
     dp.include_router(journal_router)
     dp.include_router(menu_router)
 
+    await maybe_send_reservation_notice(bot)
     logger.info("Бот запущен (polling)")
     try:
         await dp.start_polling(bot)
