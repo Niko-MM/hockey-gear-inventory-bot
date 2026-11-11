@@ -24,6 +24,7 @@ from repositories import reservations as holds_repo
 from repositories import sellers as sellers_repo
 from repositories import stock
 from repositories.sales import OutOfStockError, create_sale
+from repositories.sellers import InactiveSellerError
 from states.sale import SaleFlow
 from utils.money import format_money, parse_money
 
@@ -645,8 +646,8 @@ async def pick_sale(
                 return
         if callback_data.step == "seller":
             seller = await sellers_repo.get_seller(session, callback_data.item_id)
-            if seller is None:
-                await callback.answer("Продавец не найден.", show_alert=True)
+            if seller is None or not seller.active:
+                await callback.answer("Продавец удалён.", show_alert=True)
                 return
         for stale in CLEAR_AFTER.get(callback_data.step, ()):
             data.pop(stale, None)
@@ -715,6 +716,9 @@ async def save_sale(
     except OutOfStockError:
         await callback.answer("На партии осталось меньше, чем нужно.", show_alert=True)
         return
+    except InactiveSellerError:
+        await callback.answer("Продавец удалён.", show_alert=True)
+        return
     summary = await _progress_lines(session, data)
     await _finish_prompt(callback, state, f"✅ Продал\n\n{_receipt(summary)}")
 
@@ -744,6 +748,9 @@ async def reserve_sale(
         )
     except OutOfStockError:
         await callback.answer("На партии осталось меньше, чем нужно.", show_alert=True)
+        return
+    except InactiveSellerError:
+        await callback.answer("Продавец удалён.", show_alert=True)
         return
     summary = await _progress_lines(session, data)
     await _finish_prompt(callback, state, f"✅ Забронировал\n\n{_receipt(summary)}")
@@ -790,7 +797,11 @@ async def complete_sale_hold(
         await _show_holds(session, state, callback=callback)
         return
     receipt = _hold_card_text(hold).removeprefix("Бронь").strip()
-    await holds_repo.complete_reservation(session, hold)
+    try:
+        await holds_repo.complete_reservation(session, hold)
+    except InactiveSellerError:
+        await callback.answer("Продавец удалён.", show_alert=True)
+        return
     await _finish_prompt(callback, state, f"✅ Продал\n\n{receipt}")
 
 

@@ -43,6 +43,12 @@ def _migrate_schema(sync_conn) -> None:
             sync_conn.execute(
                 text("ALTER TABLE batches ADD COLUMN import_id INTEGER REFERENCES income_imports(id)")
             )
+    if "sellers" in tables:
+        columns = {column["name"] for column in inspector.get_columns("sellers")}
+        if "active" not in columns:
+            sync_conn.execute(
+                text("ALTER TABLE sellers ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+            )
 
 
 async def init_db() -> None:

@@ -22,7 +22,7 @@ from keyboards.menu import BTN_INCOME, BTN_SALE, BTN_SERVICE, BTN_STOCK
 from repositories import reports as reports_repo
 from repositories import sellers as sellers_repo
 from repositories.catalog import InUseError
-from repositories.sellers import InsufficientFundsError
+from repositories.sellers import InactiveSellerError, InsufficientFundsError
 from states.sellers import DepositCash, ReportPeriod, TransferCash, WithdrawCash
 from utils.dates import format_input_date, format_range, parse_date, today
 from utils.money import format_money, parse_money
@@ -221,6 +221,10 @@ async def picked_from(
     session: AsyncSession,
     state: FSMContext,
 ) -> None:
+    seller = await sellers_repo.get_seller(session, callback_data.item_id)
+    if seller is None or not seller.active:
+        await callback.answer("Продавец удалён.", show_alert=True)
+        return
     await state.update_data(from_seller_id=callback_data.item_id)
     sellers = await sellers_repo.list_sellers(session)
     await callback.answer()
@@ -236,8 +240,13 @@ async def picked_from(
 async def picked_to(
     callback: CallbackQuery,
     callback_data: ManageCB,
+    session: AsyncSession,
     state: FSMContext,
 ) -> None:
+    seller = await sellers_repo.get_seller(session, callback_data.item_id)
+    if seller is None or not seller.active:
+        await callback.answer("Продавец удалён.", show_alert=True)
+        return
     await state.update_data(to_seller_id=callback_data.item_id)
     await state.set_state(TransferCash.amount)
     await callback.answer()
@@ -274,6 +283,9 @@ async def save_transfer(message: Message, state: FSMContext, session: AsyncSessi
     except InUseError:
         await message.answer("Нельзя перевести себе.")
         return
+    except InactiveSellerError:
+        await message.answer("Продавец удалён.")
+        return
     await _delete_prompt(message.bot, state)
     await state.clear()
     rows = await sellers_repo.list_balances(session)
@@ -306,8 +318,8 @@ async def picked_withdraw(
     state: FSMContext,
 ) -> None:
     seller = await sellers_repo.get_seller(session, callback_data.item_id)
-    if seller is None:
-        await callback.answer("Продавец не найден.", show_alert=True)
+    if seller is None or not seller.active:
+        await callback.answer("Продавец удалён.", show_alert=True)
         return
     await state.update_data(withdraw_seller_id=seller.id)
     await state.set_state(WithdrawCash.amount)
@@ -370,6 +382,9 @@ async def save_withdraw(callback: CallbackQuery, session: AsyncSession, state: F
         balance = await sellers_repo.seller_balance(session, seller_id)
         await callback.answer(f"У {seller.name} только {format_money(balance)}.", show_alert=True)
         return
+    except InactiveSellerError:
+        await callback.answer("Продавец удалён.", show_alert=True)
+        return
     await state.clear()
     await callback.answer()
     rows = await sellers_repo.list_balances(session)
@@ -405,8 +420,8 @@ async def picked_deposit(
     state: FSMContext,
 ) -> None:
     seller = await sellers_repo.get_seller(session, callback_data.item_id)
-    if seller is None:
-        await callback.answer("Продавец не найден.", show_alert=True)
+    if seller is None or not seller.active:
+        await callback.answer("Продавец удалён.", show_alert=True)
         return
     await state.update_data(deposit_seller_id=seller.id)
     await state.set_state(DepositCash.amount)
@@ -466,6 +481,9 @@ async def save_deposit(callback: CallbackQuery, session: AsyncSession, state: FS
         await sellers_repo.deposit(session, seller_id, amount)
     except InsufficientFundsError:
         await callback.answer("Не получилось зачислить.", show_alert=True)
+        return
+    except InactiveSellerError:
+        await callback.answer("Продавец удалён.", show_alert=True)
         return
     await state.clear()
     await callback.answer()

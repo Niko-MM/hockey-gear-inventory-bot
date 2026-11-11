@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from db.models import Batch, PaymentLocation, Product, Reservation, Sale, Seller
 from repositories.sales import OutOfStockError
+from repositories.sellers import InactiveSellerError
 
 
 def _hold_load():
@@ -50,7 +51,9 @@ async def create_reservation(
 ) -> Reservation:
     batch = await session.get(Batch, batch_id)
     seller = await session.get(Seller, seller_id)
-    if batch is None or seller is None or quantity < 1 or batch.remaining_quantity < quantity:
+    if seller is None or not seller.active:
+        raise InactiveSellerError
+    if batch is None or quantity < 1 or batch.remaining_quantity < quantity:
         raise OutOfStockError
     batch.remaining_quantity -= quantity
     hold = Reservation(
@@ -79,6 +82,9 @@ async def cancel_reservation(session: AsyncSession, hold: Reservation) -> None:
 
 
 async def complete_reservation(session: AsyncSession, hold: Reservation) -> Sale:
+    seller = await session.get(Seller, hold.seller_id)
+    if seller is None or not seller.active:
+        raise InactiveSellerError
     sale = Sale(
         batch_id=hold.batch_id,
         seller_id=hold.seller_id,

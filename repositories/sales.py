@@ -2,7 +2,8 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Batch, PaymentLocation, Sale
+from db.models import Batch, PaymentLocation, Sale, Seller
+from repositories.sellers import InactiveSellerError
 
 
 class OutOfStockError(Exception):
@@ -17,6 +18,9 @@ async def create_sale(
     total_amount: Decimal,
     quantity: int = 1,
 ) -> Sale:
+    seller = await session.get(Seller, seller_id)
+    if seller is None or not seller.active:
+        raise InactiveSellerError
     batch = await session.get(Batch, batch_id)
     if batch is None or quantity < 1 or batch.remaining_quantity < quantity:
         raise OutOfStockError

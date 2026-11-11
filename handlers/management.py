@@ -15,6 +15,7 @@ from keyboards.service import (
 from repositories import catalog
 from repositories import sellers as sellers_repo
 from repositories.catalog import DuplicateNameError, InUseError
+from repositories.sellers import SellerBalanceError, SellerHasHoldError
 from states.catalog import AddColor, AddCurve, AddFlex, AddGrip, AddModel, RenameModel
 from states.sellers import AddSeller
 
@@ -463,11 +464,11 @@ async def delete_seller(
 ) -> None:
     try:
         await sellers_repo.delete_seller(session, callback_data.item_id)
-    except InUseError:
-        await callback.answer(
-            "Нельзя удалить: есть продажи, переводы, изъятия или опт.",
-            show_alert=True,
-        )
+    except SellerBalanceError:
+        await callback.answer("Удалить можно только при нулевой кассе.", show_alert=True)
+        return
+    except SellerHasHoldError:
+        await callback.answer("Сначала закрой бронь.", show_alert=True)
         return
     await callback.answer("Удалил.")
     await _show_sellers(callback, session)

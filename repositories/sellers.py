@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import CashDeposit, CashTransfer, CashWithdrawal, Reservation, Sale, Seller
@@ -11,8 +11,22 @@ class InsufficientFundsError(Exception):
     pass
 
 
+class InactiveSellerError(Exception):
+    pass
+
+
+class SellerBalanceError(Exception):
+    pass
+
+
+class SellerHasHoldError(Exception):
+    pass
+
+
 async def list_sellers(session: AsyncSession) -> list[Seller]:
-    result = await session.execute(select(Seller).order_by(Seller.name))
+    result = await session.execute(
+        select(Seller).where(Seller.active.is_(True)).order_by(Seller.name)
+    )
     return list(result.scalars().all())
 
 
@@ -20,49 +34,41 @@ async def get_seller(session: AsyncSession, seller_id: int) -> Seller | None:
     return await session.get(Seller, seller_id)
 
 
+async def require_active(session: AsyncSession, *seller_ids: int) -> None:
+    for seller_id in seller_ids:
+        seller = await session.get(Seller, seller_id)
+        if seller is None or not seller.active:
+            raise InactiveSellerError
+
+
 async def create_seller(session: AsyncSession, name: str) -> Seller:
-    exists = await session.scalar(select(Seller.id).where(Seller.name == name))
-    if exists is not None:
+    seller = await session.scalar(select(Seller).where(Seller.name == name))
+    if seller is None:
+        seller = Seller(name=name, active=True)
+        session.add(seller)
+        await session.flush()
+        return seller
+    if seller.active:
         raise DuplicateNameError
-    seller = Seller(name=name)
-    session.add(seller)
+    seller.active = True
     await session.flush()
     return seller
 
 
 async def delete_seller(session: AsyncSession, seller_id: int) -> None:
     seller = await session.get(Seller, seller_id)
-    if seller is None:
+    if seller is None or not seller.active:
         return
-    sales_count = await session.scalar(
-        select(func.count()).select_from(Sale).where(Sale.seller_id == seller_id)
-    )
-    transfers_count = await session.scalar(
-        select(func.count())
-        .select_from(CashTransfer)
-        .where(
-            or_(
-                CashTransfer.from_seller_id == seller_id,
-                CashTransfer.to_seller_id == seller_id,
-            )
-        )
-    )
-    withdrawals_count = await session.scalar(
-        select(func.count())
-        .select_from(CashWithdrawal)
-        .where(CashWithdrawal.seller_id == seller_id)
-    )
-    deposits_count = await session.scalar(
-        select(func.count())
-        .select_from(CashDeposit)
-        .where(CashDeposit.seller_id == seller_id)
-    )
+    balance = await seller_balance(session, seller_id)
+    if balance != 0:
+        raise SellerBalanceError
     holds_count = await session.scalar(
         select(func.count()).select_from(Reservation).where(Reservation.seller_id == seller_id)
     )
-    if sales_count or transfers_count or withdrawals_count or deposits_count or holds_count:
-        raise InUseError
-    await session.delete(seller)
+    if holds_count:
+        raise SellerHasHoldError
+    seller.active = False
+    await session.flush()
 
 
 async def seller_balance(session: AsyncSession, seller_id: int) -> Decimal:
@@ -112,6 +118,7 @@ async def transfer(
     to_seller_id: int,
     amount: Decimal,
 ) -> CashTransfer:
+    await require_active(session, from_seller_id, to_seller_id)
     if from_seller_id == to_seller_id:
         raise InUseError
     if amount <= 0:
@@ -134,6 +141,7 @@ async def withdraw(
     seller_id: int,
     amount: Decimal,
 ) -> CashWithdrawal:
+    await require_active(session, seller_id)
     if amount <= 0:
         raise InsufficientFundsError
     balance = await seller_balance(session, seller_id)
@@ -150,10 +158,8 @@ async def deposit(
     seller_id: int,
     amount: Decimal,
 ) -> CashDeposit:
+    await require_active(session, seller_id)
     if amount <= 0:
-        raise InsufficientFundsError
-    seller = await session.get(Seller, seller_id)
-    if seller is None:
         raise InsufficientFundsError
     record = CashDeposit(seller_id=seller_id, amount=amount)
     session.add(record)

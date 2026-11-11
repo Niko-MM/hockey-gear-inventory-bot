@@ -15,6 +15,7 @@ from db.models import (
     Product,
     Reservation,
     Sale,
+    Seller,
     StockWriteOff,
 )
 from repositories import catalog
@@ -28,6 +29,7 @@ from utils.dates import as_local, period_utc_bounds
 from utils.money import format_money
 
 JOURNAL_LIMIT = 20
+ARCHIVED_UNDO = "Кассир удалён. Чтобы отменить, добавь это имя ещё раз."
 
 
 class CannotUndoError(Exception):
@@ -46,6 +48,21 @@ class JournalEntry:
     body: str
     can_undo: bool
     block_reason: str = ""
+
+
+def _archived_reason(*sellers: Seller | None) -> str:
+    if any(seller is not None and not seller.active for seller in sellers):
+        return ARCHIVED_UNDO
+    return ""
+
+
+async def _block_archived(session: AsyncSession, *seller_ids: int | None) -> None:
+    for seller_id in seller_ids:
+        if seller_id is None:
+            continue
+        seller = await session.get(Seller, seller_id)
+        if seller is not None and not seller.active:
+            raise CannotUndoError(ARCHIVED_UNDO)
 
 
 def _when(moment: datetime) -> str:
@@ -80,6 +97,7 @@ def _from_sale(sale: Sale) -> JournalEntry:
     seller = sale.seller.name if sale.seller else "—"
     qty = f"{sale.quantity} шт"
     money = format_money(sale.total_amount)
+    archived = _archived_reason(sale.seller)
     return JournalEntry(
         kind="sale",
         item_id=sale.id,
@@ -93,7 +111,8 @@ def _from_sale(sale: Sale) -> JournalEntry:
             f"{qty} · чек {money}\n"
             f"Касса: {seller}"
         ),
-        can_undo=True,
+        can_undo=not archived,
+        block_reason=archived,
     )
 
 
@@ -104,6 +123,7 @@ def _from_hold(hold: Reservation) -> JournalEntry:
     seller = hold.seller.name if hold.seller else "—"
     qty = f"{hold.quantity} шт"
     money = format_money(hold.total_amount)
+    archived = _archived_reason(hold.seller)
     return JournalEntry(
         kind="hold",
         item_id=hold.id,
@@ -117,7 +137,8 @@ def _from_hold(hold: Reservation) -> JournalEntry:
             f"{qty} · сумма {money}\n"
             f"Касса: {seller}"
         ),
-        can_undo=True,
+        can_undo=not archived,
+        block_reason=archived,
     )
 
 
@@ -221,6 +242,7 @@ def _batch_entries(rows: list[Batch]) -> list[JournalEntry]:
 
 def _from_transfer(row: CashTransfer) -> JournalEntry:
     money = format_money(row.amount)
+    archived = _archived_reason(row.from_seller, row.to_seller)
     return JournalEntry(
         kind="transfer",
         item_id=row.id,
@@ -235,7 +257,8 @@ def _from_transfer(row: CashTransfer) -> JournalEntry:
             f"{row.from_seller.name} → {row.to_seller.name}\n"
             f"{money}"
         ),
-        can_undo=True,
+        can_undo=not archived,
+        block_reason=archived,
     )
 
 
@@ -260,6 +283,7 @@ def _from_writeoff(row: StockWriteOff) -> JournalEntry:
 
 def _from_deposit(row: CashDeposit) -> JournalEntry:
     money = format_money(row.amount)
+    archived = _archived_reason(row.seller)
     return JournalEntry(
         kind="deposit",
         item_id=row.id,
@@ -267,12 +291,14 @@ def _from_deposit(row: CashDeposit) -> JournalEntry:
         button=f"Опт · {_when(row.created_at)} · {row.seller.name} · {money}",
         title="Опт",
         body=f"{_when(row.created_at)}\n{row.seller.name}\n{money}",
-        can_undo=True,
+        can_undo=not archived,
+        block_reason=archived,
     )
 
 
 def _from_withdraw(row: CashWithdrawal) -> JournalEntry:
     money = format_money(row.amount)
+    archived = _archived_reason(row.seller)
     return JournalEntry(
         kind="withdraw",
         item_id=row.id,
@@ -280,7 +306,8 @@ def _from_withdraw(row: CashWithdrawal) -> JournalEntry:
         button=f"Изъятие · {_when(row.created_at)} · {row.seller.name} · {money}",
         title="Изъятие",
         body=f"{_when(row.created_at)}\n{row.seller.name}\n{money}",
-        can_undo=True,
+        can_undo=not archived,
+        block_reason=archived,
     )
 
 
@@ -542,6 +569,7 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
         sale = await session.get(Sale, item_id)
         if sale is None:
             raise CannotUndoError("Этой записи уже нет.")
+        await _block_archived(session, sale.seller_id)
         try:
             await delete_sale(session, sale)
         except OutOfStockError as exc:
@@ -595,18 +623,21 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
         row = await session.get(CashTransfer, item_id)
         if row is None:
             raise CannotUndoError("Этой записи уже нет.")
+        await _block_archived(session, row.from_seller_id, row.to_seller_id)
         await session.delete(row)
         return
     if kind == "withdraw":
         row = await session.get(CashWithdrawal, item_id)
         if row is None:
             raise CannotUndoError("Этой записи уже нет.")
+        await _block_archived(session, row.seller_id)
         await session.delete(row)
         return
     if kind == "deposit":
         row = await session.get(CashDeposit, item_id)
         if row is None:
             raise CannotUndoError("Этой записи уже нет.")
+        await _block_archived(session, row.seller_id)
         try:
             await delete_deposit(session, row)
         except InsufficientFundsError as exc:
@@ -625,6 +656,7 @@ async def undo_entry(session: AsyncSession, kind: str, item_id: int) -> None:
         hold = await session.get(Reservation, item_id)
         if hold is None:
             raise CannotUndoError("Этой записи уже нет.")
+        await _block_archived(session, hold.seller_id)
         try:
             await holds_repo.cancel_reservation(session, hold)
         except OutOfStockError as exc:
