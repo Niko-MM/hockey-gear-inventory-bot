@@ -24,18 +24,39 @@ NOTICE_TEXT = (
     "Ивач, я верю, что ты осилишь 💪🏻"
 )
 
+SELLER_NOTICE_KEY = "notice_seller_hide"
+SELLER_NOTICE_TEXT = (
+    "🏒 Клюшки мутятся, бот крутится. Возможно, я что-то напутал 👀\n"
+    "🛠 Что обновил:\n"
+    "• Пофиксил баг с удалением кассира.\n"
+    "• Новые правила удаления: баланс должен быть 0, а на кассире не должно висеть забронированных клюшек.\n"
+    "• Из списков он пропадёт. В журнале и отчётах имя останется с его историей. Чтобы вернуть, добавь то же имя ещё раз."
+)
 
-async def maybe_send_reservation_notice(bot: Bot) -> None:
+
+async def _send_once(bot: Bot, key: str, text: str) -> None:
     if not settings.admin_ids:
         return
     async with async_session_maker() as session:
-        existing = await session.get(AppSetting, NOTICE_KEY)
+        existing = await session.get(AppSetting, key)
         if existing is not None:
             return
+        delivered = False
         for admin_id in settings.admin_ids:
             try:
-                await bot.send_message(admin_id, NOTICE_TEXT)
+                await bot.send_message(admin_id, text)
+                delivered = True
             except TelegramAPIError as exc:
                 logger.warning("Не отправил уведомление админу %s: %s", admin_id, exc)
-        session.add(AppSetting(key=NOTICE_KEY, value="1"))
+        if not delivered:
+            return
+        session.add(AppSetting(key=key, value="1"))
         await session.commit()
+
+
+async def maybe_send_reservation_notice(bot: Bot) -> None:
+    await _send_once(bot, NOTICE_KEY, NOTICE_TEXT)
+
+
+async def maybe_send_seller_notice(bot: Bot) -> None:
+    await _send_once(bot, SELLER_NOTICE_KEY, SELLER_NOTICE_TEXT)
