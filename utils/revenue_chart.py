@@ -13,6 +13,12 @@ WHOLESALE_NAME = "Опт"
 CITY_ORDER = ("Москва", "Челябинск", "Санкт-Петербург")
 
 
+def _next_month(year: int, month: int) -> tuple[int, int]:
+    if month == 12:
+        return year + 1, 1
+    return year, month + 1
+
+
 def _months_through_today(keys: set[tuple[int, int]], current: date) -> list[tuple[int, int]]:
     start = min(keys)
     end = (current.year, current.month)
@@ -106,36 +112,43 @@ def render_revenue_chart(series: dict[str, dict[tuple[int, int], int]]) -> bytes
 
     for index, name in enumerate(names):
         color = _color(name, index)
-        moments = [date(year, month, 1) for year, month in closed_keys]
-        values = [kept[name].get(key, 0) for key in closed_keys]
+        first_year, first_month = month_keys[0]
+        moments = [date(first_year, first_month, 1)]
+        values = [0]
+        for year, month in closed_keys:
+            next_year, next_month = _next_month(year, month)
+            moments.append(date(next_year, next_month, 1))
+            values.append(kept[name].get((year, month), 0))
         total = kept[name].get(open_key, 0)
-        if current == open_start:
+        if current != open_start:
             moments.append(current)
             values.append(total)
-        else:
-            moments.append(open_start)
-            values.append(total)
-            moments.append(current)
-            values.append(total)
+        elif not closed_keys:
+            moments = [current]
+            values = [total]
         ax.plot(moments, values, color=color, linewidth=2.6, solid_capstyle="round", label=name)
-        ax.scatter([current], [total], s=36, color=color, zorder=3)
-        if total > 0:
-            ax.annotate(
-                _exact(total),
-                xy=(current, total),
-                xytext=(-8, 4),
-                textcoords="offset points",
-                va="bottom",
-                ha="right",
-                fontsize=12,
-                color=color,
-                zorder=4,
-            )
+        if current != open_start:
+            ax.scatter([current], [total], s=36, color=color, zorder=3)
+            if total > 0:
+                ax.annotate(
+                    _exact(total),
+                    xy=(current, total),
+                    xytext=(-8, 4),
+                    textcoords="offset points",
+                    va="bottom",
+                    ha="right",
+                    fontsize=12,
+                    color=color,
+                    zorder=4,
+                )
 
-    tick_moments = [date(year, month, 1) for year, month in closed_keys]
+    first_year, first_month = month_keys[0]
+    tick_moments = [date(first_year, first_month, 1)]
+    for year, month in closed_keys:
+        next_year, next_month = _next_month(year, month)
+        tick_moments.append(date(next_year, next_month, 1))
     if current != open_start:
-        tick_moments.append(open_start)
-    tick_moments.append(current)
+        tick_moments.append(current)
     tick_labels = []
     for index, moment in enumerate(tick_moments):
         if moment == current and current != open_start:
