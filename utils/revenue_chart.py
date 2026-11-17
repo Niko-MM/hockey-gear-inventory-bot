@@ -51,7 +51,7 @@ def _label(moment: date, first: bool, current: date) -> str:
 def _y_scale(peak: int) -> tuple[int, int]:
     if peak <= 0:
         return 40_000, 10_000
-    rough = peak / 4
+    rough = peak / 5
     power = 10 ** int(math.log10(rough))
     step = 10 * power
     for multiplier in (1, 2, 5, 10):
@@ -62,6 +62,23 @@ def _y_scale(peak: int) -> tuple[int, int]:
     if top == peak:
         top += step
     return int(top), int(step)
+
+
+def _axis_money(value, _pos) -> str:
+    number = int(value)
+    if number == 0:
+        return "0"
+    if number >= 1_000_000:
+        millions = number / 1_000_000
+        if millions == int(millions):
+            return f"{int(millions)} млн"
+        text = f"{millions:.1f}".replace(".", ",").rstrip("0").rstrip(",")
+        return f"{text} млн"
+    return f"{number // 1000} тыс."
+
+
+def _exact(amount: int) -> str:
+    return f"{amount:,}".replace(",", " ")
 
 
 def _color(name: str, index: int) -> str:
@@ -112,6 +129,17 @@ def render_revenue_chart(series: dict[str, dict[tuple[int, int], int]]) -> bytes
         color = _color(name, index)
         ax.plot(dates, values, color=color, linewidth=2.6, solid_capstyle="round", label=name)
         ax.scatter(dates[-1], values[-1], s=36, color=color, zorder=3)
+        ax.annotate(
+            _exact(values[-1]),
+            xy=(dates[-1], values[-1]),
+            xytext=(-8, 0),
+            textcoords="offset points",
+            va="center",
+            ha="right",
+            fontsize=12,
+            color=color,
+            zorder=4,
+        )
 
     fig.text(0.10, 0.93, "Выручка по месяцам", fontsize=26, color="#1d1d1f")
     ax.axvline(dates[-1], color="#d2d2d7", linewidth=1, zorder=0)
@@ -121,9 +149,7 @@ def render_revenue_chart(series: dict[str, dict[tuple[int, int], int]]) -> bytes
     ax.set_xticklabels(labels)
     ax.set_ylim(0, top)
     ax.set_yticks(range(0, top + 1, step))
-    ax.yaxis.set_major_formatter(
-        mticker.FuncFormatter(lambda value, _pos: "0" if int(value) == 0 else f"{int(value) // 1000} тыс.")
-    )
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_axis_money))
     ax.tick_params(axis="x", labelsize=14, colors="#6e6e73", length=0, pad=8)
     ax.tick_params(axis="y", labelsize=13, colors="#86868b", length=0, pad=6)
     ax.grid(axis="y", color="#f2f2f7", linewidth=1)

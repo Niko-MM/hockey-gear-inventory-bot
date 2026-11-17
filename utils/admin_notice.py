@@ -60,3 +60,17 @@ async def maybe_send_reservation_notice(bot: Bot) -> None:
 
 async def maybe_send_seller_notice(bot: Bot) -> None:
     await _send_once(bot, SELLER_NOTICE_KEY, SELLER_NOTICE_TEXT)
+
+
+CHART_NOTICE_KEY = "notice_revenue_chart"
+CHART_NOTICE_TEXT = (
+    "🏒 Клюшки мутятся, бот крутится. Возможно, я что-то напутал 👀\n"
+    "🛠 Что обновил:\n"
+    "• В финансах появилась кнопка «График».\n"
+    "• Линии показывают выручку по месяцам: города и опт, за всю историю.\n"
+    "• Текущий месяц заканчивается сегодня. Рядом с точкой его сумма."
+)
+
+
+async def maybe_send_chart_notice(bot: Bot) -> None:
+    await _send_once(bot, CHART_NOTICE_KEY, CHART_NOTICE_TEXT)
