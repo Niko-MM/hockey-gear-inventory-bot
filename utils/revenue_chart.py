@@ -106,41 +106,19 @@ def render_revenue_chart(series: dict[str, dict[tuple[int, int], int]]) -> bytes
 
     for index, name in enumerate(names):
         color = _color(name, index)
-        labeled = False
-        if closed_keys:
-            closed_dates = [date(year, month, 1) for year, month in closed_keys]
-            closed_values = [kept[name].get(key, 0) for key in closed_keys]
-            ax.plot(
-                closed_dates,
-                closed_values,
-                color=color,
-                linewidth=2.6,
-                solid_capstyle="round",
-                label=name,
-            )
-            labeled = True
-            if len(closed_dates) == 1:
-                ax.scatter(closed_dates, closed_values, s=28, color=color, zorder=3)
+        moments = [date(year, month, 1) for year, month in closed_keys]
+        values = [kept[name].get(key, 0) for key in closed_keys]
         total = kept[name].get(open_key, 0)
         if current == open_start:
-            ax.scatter(
-                [current],
-                [total],
-                s=36,
-                color=color,
-                zorder=3,
-                label=None if labeled else name,
-            )
+            moments.append(current)
+            values.append(total)
         else:
-            ax.plot(
-                [open_start, current],
-                [0, total],
-                color=color,
-                linewidth=2.6,
-                solid_capstyle="round",
-                label=None if labeled else name,
-            )
-            ax.scatter([current], [total], s=36, color=color, zorder=3)
+            moments.append(open_start)
+            values.append(total)
+            moments.append(current)
+            values.append(total)
+        ax.plot(moments, values, color=color, linewidth=2.6, solid_capstyle="round", label=name)
+        ax.scatter([current], [total], s=36, color=color, zorder=3)
         if total > 0:
             ax.annotate(
                 _exact(total),
