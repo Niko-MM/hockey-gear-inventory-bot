@@ -13,14 +13,6 @@ WHOLESALE_NAME = "Опт"
 CITY_ORDER = ("Москва", "Челябинск", "Санкт-Петербург")
 
 
-def _month_end(year: int, month: int, current: date) -> date:
-    if (year, month) == (current.year, current.month):
-        return current
-    if month == 12:
-        return date(year, 12, 31)
-    return date(year, month + 1, 1) - timedelta(days=1)
-
-
 def _months_through_today(keys: set[tuple[int, int]], current: date) -> list[tuple[int, int]]:
     start = min(keys)
     end = (current.year, current.month)
@@ -35,17 +27,6 @@ def _months_through_today(keys: set[tuple[int, int]], current: date) -> list[tup
             year += 1
             month = 1
     return months
-
-
-def _label(moment: date, first: bool, current: date) -> str:
-    name = MONTH_SHORT[moment.month - 1]
-    if (moment.year, moment.month) == (current.year, current.month):
-        text = f"{moment.day} {name}"
-    else:
-        text = name
-    if first or moment.month == 1:
-        return f"{text} {moment.year % 100:02d}"
-    return text
 
 
 def _y_scale(peak: int) -> tuple[int, int]:
@@ -107,17 +88,15 @@ def render_revenue_chart(series: dict[str, dict[tuple[int, int], int]]) -> bytes
     current = today()
     keys = {key for months in kept.values() for key in months}
     month_keys = _months_through_today(keys, current)
-    dates = [_month_end(year, month, current) for year, month in month_keys]
-    labels = [_label(moment, index == 0, current) for index, moment in enumerate(dates)]
+    open_key = (current.year, current.month)
+    open_start = date(current.year, current.month, 1)
+    closed_keys = [key for key in month_keys if key != open_key]
     names = [name for name in CITY_ORDER if name in kept]
     names.extend(sorted(name for name in kept if name not in names and name != WHOLESALE_NAME))
     if WHOLESALE_NAME in kept:
         names.append(WHOLESALE_NAME)
-    lines = [
-        (name, [kept[name].get(key, 0) for key in month_keys])
-        for name in names
-    ]
-    top, step = _y_scale(max(max(values) for _, values in lines))
+    amounts = [amount for months in kept.values() for amount in months.values()]
+    top, step = _y_scale(max(amounts))
 
     plt.rcParams["font.family"] = "DejaVu Sans"
     fig, ax = plt.subplots(figsize=(12.8, 7.4), dpi=100)
@@ -125,28 +104,79 @@ def render_revenue_chart(series: dict[str, dict[tuple[int, int], int]]) -> bytes
     ax.set_facecolor("#ffffff")
     fig.subplots_adjust(left=0.10, right=0.97, top=0.86, bottom=0.16)
 
-    for index, (name, values) in enumerate(lines):
+    for index, name in enumerate(names):
         color = _color(name, index)
-        ax.plot(dates, values, color=color, linewidth=2.6, solid_capstyle="round", label=name)
-        ax.scatter(dates[-1], values[-1], s=36, color=color, zorder=3)
-        ax.annotate(
-            _exact(values[-1]),
-            xy=(dates[-1], values[-1]),
-            xytext=(-8, 0),
-            textcoords="offset points",
-            va="center",
-            ha="right",
-            fontsize=12,
-            color=color,
-            zorder=4,
-        )
+        labeled = False
+        if closed_keys:
+            closed_dates = [date(year, month, 1) for year, month in closed_keys]
+            closed_values = [kept[name].get(key, 0) for key in closed_keys]
+            ax.plot(
+                closed_dates,
+                closed_values,
+                color=color,
+                linewidth=2.6,
+                solid_capstyle="round",
+                label=name,
+            )
+            labeled = True
+            if len(closed_dates) == 1:
+                ax.scatter(closed_dates, closed_values, s=28, color=color, zorder=3)
+        total = kept[name].get(open_key, 0)
+        if current == open_start:
+            ax.scatter(
+                [current],
+                [total],
+                s=36,
+                color=color,
+                zorder=3,
+                label=None if labeled else name,
+            )
+        else:
+            ax.plot(
+                [open_start, current],
+                [0, total],
+                color=color,
+                linewidth=2.6,
+                solid_capstyle="round",
+                label=None if labeled else name,
+            )
+            ax.scatter([current], [total], s=36, color=color, zorder=3)
+        if total > 0:
+            ax.annotate(
+                _exact(total),
+                xy=(current, total),
+                xytext=(-8, 0),
+                textcoords="offset points",
+                va="center",
+                ha="right",
+                fontsize=12,
+                color=color,
+                zorder=4,
+            )
+
+    tick_moments = [date(year, month, 1) for year, month in closed_keys]
+    if current != open_start:
+        tick_moments.append(open_start)
+    tick_moments.append(current)
+    tick_labels = []
+    for index, moment in enumerate(tick_moments):
+        if moment == current and current != open_start:
+            tick_labels.append(f"{moment.day} {MONTH_SHORT[moment.month - 1]}")
+        else:
+            name = MONTH_SHORT[moment.month - 1]
+            if index == 0 or moment.month == 1:
+                tick_labels.append(f"{name} {moment.year % 100:02d}")
+            else:
+                tick_labels.append(name)
 
     fig.text(0.10, 0.93, "Выручка по месяцам", fontsize=26, color="#1d1d1f")
-    ax.axvline(dates[-1], color="#d2d2d7", linewidth=1, zorder=0)
-    left_pad = timedelta(days=15 if len(dates) == 1 else 10)
-    ax.set_xlim(dates[0] - left_pad, dates[-1] + timedelta(days=5))
-    ax.set_xticks(dates)
-    ax.set_xticklabels(labels)
+    if current != open_start:
+        ax.axvline(open_start, color="#d2d2d7", linewidth=1, zorder=0)
+    ax.axvline(current, color="#d2d2d7", linewidth=1, zorder=0)
+    left_pad = timedelta(days=15 if len(tick_moments) == 1 else 10)
+    ax.set_xlim(tick_moments[0] - left_pad, current + timedelta(days=5))
+    ax.set_xticks(tick_moments)
+    ax.set_xticklabels(tick_labels)
     ax.set_ylim(0, top)
     ax.set_yticks(range(0, top + 1, step))
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(_axis_money))
@@ -158,7 +188,7 @@ def render_revenue_chart(series: dict[str, dict[tuple[int, int], int]]) -> bytes
         ax.spines[side].set_visible(False)
     ax.legend(
         frameon=False,
-        ncol=min(4, len(lines)),
+        ncol=min(4, len(names)),
         loc="upper center",
         bbox_to_anchor=(0.5, -0.10),
         fontsize=13,
