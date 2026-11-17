@@ -123,9 +123,9 @@ def render_revenue_chart(series: dict[str, dict[tuple[int, int], int]]) -> bytes
             ax.annotate(
                 _exact(total),
                 xy=(current, total),
-                xytext=(-8, 0),
+                xytext=(-8, 4),
                 textcoords="offset points",
-                va="center",
+                va="bottom",
                 ha="right",
                 fontsize=12,
                 color=color,
