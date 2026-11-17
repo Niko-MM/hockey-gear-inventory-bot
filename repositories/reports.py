@@ -1,7 +1,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
@@ -19,7 +19,7 @@ from db.models import (
     StickModel,
     StockWriteOff,
 )
-from utils.dates import period_utc_bounds
+from utils.dates import as_local, period_utc_bounds
 
 
 @dataclass(frozen=True)
@@ -226,3 +226,34 @@ async def period_report(session: AsyncSession, start: date, end: date) -> Period
         wholesale_total=wholesale_total,
         sales_by_city=sales_by_city,
     )
+
+
+def _rubles(amount: Decimal) -> int:
+    return int(Decimal(amount).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+async def revenue_by_month(session: AsyncSession) -> dict[str, dict[tuple[int, int], int]]:
+    sale_rows = await session.execute(
+        select(City.name, Sale.total_amount, Sale.created_at)
+        .join(Batch, Sale.batch_id == Batch.id)
+        .join(City, Batch.city_id == City.id)
+    )
+    cities: dict[str, dict[tuple[int, int], Decimal]] = defaultdict(lambda: defaultdict(lambda: Decimal("0")))
+    for name, amount, created_at in sale_rows.all():
+        local = as_local(created_at).date()
+        cities[name][(local.year, local.month)] += Decimal(amount)
+
+    deposit_rows = await session.execute(select(CashDeposit.amount, CashDeposit.created_at))
+    wholesale: dict[tuple[int, int], Decimal] = defaultdict(lambda: Decimal("0"))
+    for amount, created_at in deposit_rows.all():
+        local = as_local(created_at).date()
+        wholesale[(local.year, local.month)] += Decimal(amount)
+
+    series = {
+        name: {key: _rubles(total) for key, total in months.items()}
+        for name, months in cities.items()
+        if any(total != 0 for total in months.values())
+    }
+    if any(total != 0 for total in wholesale.values()):
+        series["Опт"] = {key: _rubles(total) for key, total in wholesale.items()}
+    return series

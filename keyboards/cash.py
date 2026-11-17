@@ -22,6 +22,10 @@ def cash_menu(rows: list[tuple[Seller, Decimal]]) -> InlineKeyboardMarkup:
             text="За период",
             callback_data=ManageCB(section="cash", action="report").pack(),
         )
+    builder.button(
+        text="График",
+        callback_data=ManageCB(section="cash", action="chart").pack(),
+    )
     if len(rows) >= 2:
         builder.button(
             text="Перевести",

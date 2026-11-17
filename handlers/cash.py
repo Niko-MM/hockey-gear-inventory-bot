@@ -5,7 +5,7 @@ from decimal import Decimal
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from keyboards.callbacks import ManageCB, NavCB
@@ -26,6 +26,7 @@ from repositories.sellers import InactiveSellerError, InsufficientFundsError
 from states.sellers import DepositCash, ReportPeriod, TransferCash, WithdrawCash
 from utils.dates import format_input_date, format_range, parse_date, today
 from utils.money import format_money, parse_money
+from utils.revenue_chart import render_revenue_chart
 
 router = Router()
 
@@ -530,6 +531,23 @@ async def _finish_report(
         await _delete_prompt(message.bot, state)
         await state.clear()
         await message.answer(text, reply_markup=markup)
+
+
+@router.callback_query(ManageCB.filter((F.section == "cash") & (F.action == "chart")))
+async def show_revenue_chart(callback: CallbackQuery, session: AsyncSession) -> None:
+    series = await reports_repo.revenue_by_month(session)
+    png = render_revenue_chart(series)
+    if png is None:
+        await callback.answer("Продаж и опта ещё нет.", show_alert=True)
+        return
+    await callback.answer()
+    message = _callback_message(callback)
+    if message is None:
+        return
+    await message.answer_photo(
+        BufferedInputFile(png, filename="revenue.png"),
+        caption="Выручка по месяцам",
+    )
 
 
 @router.callback_query(ManageCB.filter((F.section == "cash") & (F.action == "report")))
