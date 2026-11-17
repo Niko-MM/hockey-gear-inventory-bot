@@ -150,20 +150,15 @@ def render_revenue_chart(series: dict[str, dict[tuple[int, int], int]]) -> bytes
     if current != open_start:
         tick_moments.append(current)
     tick_labels = []
-    for index, moment in enumerate(tick_moments):
+    for moment in tick_moments:
         if moment == current and current != open_start:
             tick_labels.append(f"{moment.day} {MONTH_SHORT[moment.month - 1]}")
         else:
-            name = MONTH_SHORT[moment.month - 1]
-            if index == 0 or moment.month == 1:
-                tick_labels.append(f"{name} {moment.year % 100:02d}")
-            else:
-                tick_labels.append(name)
+            tick_labels.append(MONTH_SHORT[moment.month - 1])
 
     fig.text(0.10, 0.93, "Выручка по месяцам", fontsize=26, color="#1d1d1f")
-    if current != open_start:
-        ax.axvline(open_start, color="#d2d2d7", linewidth=1, zorder=0)
-    ax.axvline(current, color="#d2d2d7", linewidth=1, zorder=0)
+    for moment in tick_moments:
+        ax.axvline(moment, color="#d2d2d7", linewidth=1, zorder=0)
     left_pad = timedelta(days=15 if len(tick_moments) == 1 else 10)
     ax.set_xlim(tick_moments[0] - left_pad, current + timedelta(days=5))
     ax.set_xticks(tick_moments)
