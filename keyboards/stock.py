@@ -6,6 +6,12 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from db.models import City
 from keyboards.callbacks import StockCB
 
+_GRIP_LABELS = {"L": "Левый", "R": "Правый"}
+
+
+def _grip_label(name: str) -> str:
+    return _GRIP_LABELS.get(name.strip().upper(), name)
+
 
 def back_to_cities_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -39,7 +45,7 @@ def grips_keyboard(
     for grip_id, title, qty in items:
         builder.row(
             InlineKeyboardButton(
-                text=f"{title} — {qty} шт",
+                text=f"{_grip_label(title)} — {qty} шт",
                 callback_data=StockCB(action="flexes", city_id=city_id, grip_id=grip_id).pack(),
             )
         )
